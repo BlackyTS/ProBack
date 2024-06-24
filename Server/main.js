@@ -7,11 +7,14 @@ const bodyParser = require('body-parser')
 const cookieParser = require('cookie-parser')
 const session = require('express-session')
 const jwt = require('jsonwebtoken');
+
 require('dotenv').config();
 
 app.use(express.json());
 app.use(bodyparser.json())
 const secret = process.env.JWT_SECRET;
+
+const testPush = []
 
 const port = 8000
 

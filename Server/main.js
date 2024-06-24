@@ -19,7 +19,6 @@ const corsOptions = {
 app.use(cors(corsOptions))
 
 app.use(express.json());
-app.use(bodyparser.json())
 const secret = process.env.JWT_SECRET;
 
 const testPush = []

@@ -1,6 +1,5 @@
 const pgp = require('pg-promise')()
 const express = require ('express')
-const bodyparser = require('body-parser')
 const app = express()
 const bcrypt = require('bcrypt')
 const bodyParser = require('body-parser')

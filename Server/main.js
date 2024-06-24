@@ -7,8 +7,17 @@ const bodyParser = require('body-parser')
 const cookieParser = require('cookie-parser')
 const session = require('express-session')
 const jwt = require('jsonwebtoken');
+const cors = require('cors')
+
+
 
 require('dotenv').config();
+
+const corsOptions = {
+    origin: 'http://localhost:3000',
+    optionsSuccessStatus: 200
+}
+app.use(cors(corsOptions))
 
 app.use(express.json());
 app.use(bodyparser.json())
@@ -18,12 +27,13 @@ const testPush = []
 
 const port = 8000
 
+
 const connectionOptions = {
     host: 'localhost',
     port: 5432,
-    database: 'ProjectTEST',
+    database: 'ProjectBack',
     user: 'postgres',
-    password: 'admin'
+    password: 'nook2209'
 }
 
 const db = pgp(connectionOptions)

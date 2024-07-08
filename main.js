@@ -1,0 +1,191 @@
+const pgp = require('pg-promise')()
+const express = require('express')
+const app = express()
+const bcrypt = require('bcrypt')
+const bodyParser = require('body-parser')
+const cookieParser = require('cookie-parser')
+const jwt = require('jsonwebtoken');
+const cors = require('cors')
+
+require('dotenv').config();
+
+const corsOptions = {
+    origin: 'http://localhost:3000',
+    credentials: true,  // เปิดใช้งานการส่งคุกกี้
+    optionsSuccessStatus: 200
+}
+
+app.use(cors(corsOptions));
+app.use(express.json());
+app.use(bodyParser.json());
+app.use(cookieParser());
+
+const secret = process.env.JWT_SECRET;
+
+const port = 8000
+
+const connectionOptions = {
+    host: 'localhost',
+    port: 5432,
+    database: 'ProjectTEST',
+    user: 'postgres',
+    password: 'admin'
+}
+
+const db = pgp(connectionOptions);
+
+//JWT function
+const generateToken = (user) => {
+    return jwt.sign({ id: user.user_id, role: user.user_role }, secret, { expiresIn: '72h' });
+};
+
+// ฟังก์ชัน Middleware สำหรับการตรวจสอบ JWT token
+const authenticateToken = (req, res, next) => {
+    const token = req.cookies['token'];
+    if (token == null) {
+        console.log('No token provided');
+        return res.sendStatus(401); // ถ้าไม่มี token ส่ง 401 Unauthorized
+    }
+
+    jwt.verify(token, secret, (err, user) => {
+        if (err) {
+            console.log('Token verification failed:', err);
+            return res.sendStatus(403); // ถ้า token ไม่ถูกต้อง ส่ง 403 Forbidden
+        }
+        req.user = user; // เก็บข้อมูลผู้ใช้ที่ถูกตรวจสอบแล้วใน req.user
+        next();
+    });
+};
+
+// ฟังก์ชัน Middleware สำหรับการตรวจสอบสิทธิ์ของผู้ใช้
+const authorizeRole = (roles) => {
+    return (req, res, next) => {
+        if (!roles.includes(req.user.role)) {
+            return res.sendStatus(403);
+        }
+        next();
+    };
+};
+
+// Register
+app.post('/register', async (req, res) => {
+    const { email, password, firstname, lastname, role } = req.body;
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    try {
+        const existingUser = await db.oneOrNone('SELECT * FROM users WHERE user_email = $1', [email]);
+        if (existingUser) {
+            return res.status(400).send('Email already in use');
+        }
+        await db.none('INSERT INTO users(user_email, user_password, user_firstname, user_lastname, role_user) VALUES($1, $2, $3, $4, $5)', [email, hashedPassword, firstname, lastname, role]);
+        res.status(200).send('User registered successfully');
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).send('Error registering user');
+    }
+});
+
+// Login
+app.post('/login', (req, res) => {
+    const { email, password } = req.body;
+
+    db.oneOrNone('SELECT * FROM users WHERE user_email = $1', [email])
+        .then(async user => {
+            if (!user) {
+                return res.status(400).send('Invalid email or password');
+            }
+            const match = await bcrypt.compare(password, user.user_password);
+            if (match) {
+                const token = generateToken(user);
+                res.cookie('token', token, { maxAge: 72*60*60*1000, httpOnly: true, secure: true, sameSite: 'none' }); // ตั้งค่า cookie สำหรับ JWT token
+                res.status(200).json({ message: 'Logged in successfully' });
+            } else {
+                res.status(400).send('Invalid email or password');
+            }
+        })
+        .catch(error => {
+            console.error('ERROR:', error);
+            res.status(500).send('Server error');
+        });
+});
+
+// การเพิ่มอุปกรณ์ใหม่ (สำหรับadmin)
+app.post('/devices', authenticateToken, authorizeRole(['admin']), async (req, res) => {
+    const { id, name, description, availability, approve, limit } = req.body;
+    try {
+        await db.none('INSERT INTO device(device_id, device_name, device_description, device_availability, device_limit, device_approve) VALUES($1, $2, $3, $4, $5, $6)', [id, name, description, availability, limit, approve]);
+        res.status(200).send('Device added successfully');
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).send('Error adding device');
+    }
+});
+
+// การยืมอุปกรณ์
+app.post('/loan', authenticateToken, authorizeRole(['student', 'teacher', 'admin']), async (req, res) => {
+    const { transaction_id, device_id, location_to_loan, quantity } = req.body;
+    try {
+        const device = await db.oneOrNone('SELECT * FROM device WHERE device_id = $1', [device_id]);
+        const currentLoanCount = await db.one('SELECT COUNT(*) FROM loan_detail WHERE user_id = $1 AND device_id = $2 AND loan_approved = true AND return_date IS NULL', [req.user.user_id, device_id]);
+        
+        if (device && device.device_availability >= quantity) {
+            if (currentLoanCount.count >= device.device_limit) {
+                res.status(400).send('You have reached the loan limit for this device');
+            } else {
+                await db.tx(async t => {
+                    await t.none('INSERT INTO loan_detail(transaction_id, device_id, loan_day, loan_month, loan_year, location_to_loan, loan_approved, loan_quantity) VALUES($1, $2, EXTRACT(DAY FROM CURRENT_DATE), EXTRACT(MONTH FROM CURRENT_DATE), EXTRACT(YEAR FROM CURRENT_DATE), $3, $4, $5)', [transaction_id, device_id, location_to_loan, false, quantity]);
+                });
+                res.status(200).send('Loan request submitted successfully. Awaiting approval.');
+            }
+        } else {
+            res.status(400).send('Device is not available or insufficient quantity');
+        }
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).send('Error submitting loan request');
+    }
+});
+
+// ยืนยันการยืมอุปกรณ์
+app.post('/approve-loan', authenticateToken, authorizeRole(['teacher','admin']), async (req, res) => {
+    const { loan_id } = req.body;
+    try {
+        const loanDetail = await db.oneOrNone('SELECT * FROM loan_detail WHERE loan_id = $1', [loan_id]);
+        if (loanDetail) {
+            await db.tx(async t => {
+                await t.none('UPDATE loan_detail SET loan_approved = $1 WHERE loan_id = $2', [true, loan_id]);
+                await t.none('UPDATE device SET device_availability = device_availability - $1 WHERE device_id = $2', [loanDetail.loan_quantity, loanDetail.device_id]);
+            });
+            res.status(200).send('Loan request approved successfully');
+        } else {
+            res.status(400).send('Loan request not found');
+        }
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).send('Error approving loan request');
+    }
+});
+
+// การคืนอุปกรณ์ 
+app.post('/return', authenticateToken, authorizeRole(['student', 'teacher', 'admin']), async (req, res) => {
+    const { device_id } = req.body;
+    try {
+        const loanDetail = await db.oneOrNone('SELECT * FROM loan_detail WHERE device_id = $1 AND user_id = $2 AND loan_approved = true AND return_date IS NULL', [device_id, req.user.user_id]);
+        if (loanDetail) {
+            await db.tx(async t => {
+                await t.none('UPDATE loan_detail SET return_date = CURRENT_DATE WHERE loan_id = $1', [loanDetail.loan_id]);
+                await t.none('UPDATE device SET device_availability = device_availability + $1 WHERE device_id = $2', [loanDetail.loan_quantity, device_id]);
+            });
+            res.status(200).send('Device returned successfully');
+        } else {
+            res.status(400).send('No loan record found for this device');
+        }
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).send('Error returning device');
+    }
+});
+
+app.listen(port, () => {
+    console.log(`Server is running on http://localhost:${port}`);
+});

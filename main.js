@@ -120,20 +120,37 @@ app.post('/devices', authenticateToken, authorizeRole(['admin']), async (req, re
         res.status(500).send('Error adding device');
     }
 });
+app.get('/devices', authenticateToken, authorizeRole(['student', 'teacher', 'admin']), async (req, res) => {
+    try {
+        const devices = await db.any('SELECT * FROM device');
+        res.status(200).json(devices);
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).send('Error fetching devices');
+    }
+});
 
 // การยืมอุปกรณ์
 app.post('/loan', authenticateToken, authorizeRole(['student', 'teacher', 'admin']), async (req, res) => {
     const { transaction_id, device_id, location_to_loan, quantity } = req.body;
     try {
+        // ตรวจสอบว่ามี transaction_id ไหม
+        let transaction = await db.oneOrNone('SELECT * FROM transaction WHERE transaction_id = $1', [transaction_id]);
+
+        if (!transaction) {
+        // ถ้าไม่มี transaction_id ให้สร้างใหม่
+            await db.none('INSERT INTO transaction (transaction_id, transaction_details) VALUES ($1, $2)', [transaction_id, 'Some details']);
+        }
+
         const device = await db.oneOrNone('SELECT * FROM device WHERE device_id = $1', [device_id]);
-        const currentLoanCount = await db.one('SELECT COUNT(*) FROM loan_detail WHERE user_id = $1 AND device_id = $2 AND loan_approved = true AND return_date IS NULL', [req.user.user_id, device_id]);
-        
+        const currentLoanCount = await db.one('SELECT COUNT(*) FROM loan_detail WHERE user_id = $1 AND device_id = $2 AND loan_approved = true AND return_date IS NULL', [req.user.id, device_id]);
+
         if (device && device.device_availability >= quantity) {
             if (currentLoanCount.count >= device.device_limit) {
                 res.status(400).send('You have reached the loan limit for this device');
             } else {
                 await db.tx(async t => {
-                    await t.none('INSERT INTO loan_detail(transaction_id, device_id, loan_day, loan_month, loan_year, location_to_loan, loan_approved, loan_quantity) VALUES($1, $2, EXTRACT(DAY FROM CURRENT_DATE), EXTRACT(MONTH FROM CURRENT_DATE), EXTRACT(YEAR FROM CURRENT_DATE), $3, $4, $5)', [transaction_id, device_id, location_to_loan, false, quantity]);
+                    await t.none('INSERT INTO loan_detail (transaction_id, device_id, loan_day, loan_month, loan_year, location_to_loan, loan_approved, loan_quantity) VALUES ($1, $2, EXTRACT(DAY FROM CURRENT_DATE), EXTRACT(MONTH FROM CURRENT_DATE), EXTRACT(YEAR FROM CURRENT_DATE), $3, $4, $5)', [transaction_id, device_id, location_to_loan, false, quantity]);
                 });
                 res.status(200).send('Loan request submitted successfully. Awaiting approval.');
             }
@@ -146,8 +163,8 @@ app.post('/loan', authenticateToken, authorizeRole(['student', 'teacher', 'admin
     }
 });
 
-// ยืนยันการยืมอุปกรณ์
-app.post('/approve-loan', authenticateToken, authorizeRole(['teacher','admin']), async (req, res) => {
+// ยืนยันการยืม
+app.post('/approve-loan', authenticateToken, authorizeRole(['teacher', 'admin']), async (req, res) => {
     const { loan_id } = req.body;
     try {
         const loanDetail = await db.oneOrNone('SELECT * FROM loan_detail WHERE loan_id = $1', [loan_id]);
@@ -166,25 +183,33 @@ app.post('/approve-loan', authenticateToken, authorizeRole(['teacher','admin']),
     }
 });
 
-// การคืนอุปกรณ์ 
+// การคืน
 app.post('/return', authenticateToken, authorizeRole(['student', 'teacher', 'admin']), async (req, res) => {
     const { device_id } = req.body;
     try {
-        const loanDetail = await db.oneOrNone('SELECT * FROM loan_detail WHERE device_id = $1 AND user_id = $2 AND loan_approved = true AND return_date IS NULL', [device_id, req.user.user_id]);
+        console.log('Device ID:', device_id);
+        console.log('User ID:', req.user.id);
+
+        const loanDetail = await db.oneOrNone('SELECT * FROM loan_detail WHERE device_id = $1 AND user_id = $2 AND loan_approved = true AND return_date IS NULL', [device_id, req.user.id]);
+
         if (loanDetail) {
+            console.log('Loan Detail:', loanDetail);
             await db.tx(async t => {
                 await t.none('UPDATE loan_detail SET return_date = CURRENT_DATE WHERE loan_id = $1', [loanDetail.loan_id]);
                 await t.none('UPDATE device SET device_availability = device_availability + $1 WHERE device_id = $2', [loanDetail.loan_quantity, device_id]);
+                await t.none('INSERT INTO return_detail (loan_id, return_day, return_month, return_year) VALUES ($1, EXTRACT(DAY FROM CURRENT_DATE), EXTRACT(MONTH FROM CURRENT_DATE), EXTRACT(YEAR FROM CURRENT_DATE))', [loanDetail.loan_id]);
             });
-            res.status(200).send('Device returned successfully');
+            res.status(200).send('return complete!!!');
         } else {
-            res.status(400).send('No loan record found for this device');
+            console.log('No loan record found for this device');
+            res.status(400).send('No history to loan');
         }
     } catch (error) {
-        console.error('ERROR:', error);
-        res.status(500).send('Error returning device');
+        console.error('error to return!!!:', error); // บันทึกข้อผิดพลาด
+        res.status(500).send('error to return!!!');
     }
 });
+
 
 app.listen(port, () => {
     console.log(`Server is running on http://localhost:${port}`);

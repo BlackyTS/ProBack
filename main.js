@@ -11,7 +11,7 @@ require('dotenv').config();
 
 const corsOptions = {
     origin: 'http://localhost:3000',
-    credentials: true,  // เปิดใช้งานการส่งคุกกี้
+    credentials: true,  
     optionsSuccessStatus: 200
 }
 
@@ -44,15 +44,15 @@ const authenticateToken = (req, res, next) => {
     const token = req.cookies['token'];
     if (token == null) {
         console.log('No token provided');
-        return res.sendStatus(401); // ถ้าไม่มี token ส่ง 401 Unauthorized
+        return res.sendStatus(401); 
     }
 
     jwt.verify(token, secret, (err, user) => {
         if (err) {
             console.log('Token verification failed:', err);
-            return res.sendStatus(403); // ถ้า token ไม่ถูกต้อง ส่ง 403 Forbidden
+            return res.sendStatus(403); 
         }
-        req.user = user; // เก็บข้อมูลผู้ใช้ที่ถูกตรวจสอบแล้วใน req.user
+        req.user = user; 
         next();
     });
 };
@@ -92,25 +92,37 @@ app.post('/login', (req, res) => {
     db.oneOrNone('SELECT * FROM users WHERE user_email = $1', [email])
         .then(async user => {
             if (!user) {
-                return res.status(400).send('Invalid email or password');
+                return res.status(400).send({ message: 'Invalid email or password' });
             }
             const match = await bcrypt.compare(password, user.user_password);
             if (match) {
                 const token = generateToken(user);
                 res.cookie('token', token, { maxAge: 72*60*60*1000, httpOnly: true, secure: true, sameSite: 'none' }); // ตั้งค่า cookie สำหรับ JWT token
-                res.status(200).json({ message: 'Logged in successfully' });
+                let isAdmin
+                if (user.user_role === 'admin')
+                    isAdmin = true
+                else
+                    isAdmin = false
+                res.status(200).json({ 
+                    type: "ok",
+                    message: 'Logged in successfully',
+                    isAdmin: isAdmin
+                });
             } else {
-                res.status(400).send('Invalid email or password');
+                res.status(400).send({ 
+                    type: "no",
+                    message: 'Invalid email or password' 
+                });
             }
         })
         .catch(error => {
             console.error('ERROR:', error);
-            res.status(500).send('Server error');
+            res.status(500).send({ message: 'Server error' });
         });
 });
 
 // การเพิ่มอุปกรณ์ใหม่ (สำหรับadmin)
-app.post('/devices', authenticateToken, authorizeRole(['admin']), async (req, res) => {
+app.post('/devices/add', authenticateToken, authorizeRole(['teacher','admin']), async (req, res) => {
     const { id, name, description, availability, approve, limit } = req.body;
     try {
         await db.none('INSERT INTO device(device_id, device_name, device_description, device_availability, device_limit, device_approve) VALUES($1, $2, $3, $4, $5, $6)', [id, name, description, availability, limit, approve]);
@@ -120,6 +132,7 @@ app.post('/devices', authenticateToken, authorizeRole(['admin']), async (req, re
         res.status(500).send('Error adding device');
     }
 });
+// เช็คอุปกรณ์ที่เพิ่มมา
 app.get('/devices', authenticateToken, authorizeRole(['student', 'teacher', 'admin']), async (req, res) => {
     try {
         const devices = await db.any('SELECT * FROM device');
@@ -130,9 +143,27 @@ app.get('/devices', authenticateToken, authorizeRole(['student', 'teacher', 'adm
     }
 });
 
+// แก้ไขสถานะอุปกรณ์
+app.put('/device/update', authenticateToken, authorizeRole(['teacher', 'admin']), async (req, res) => {
+    const { id, availability, status } = req.body;
+    try {
+        await db.none('UPDATE device SET device_availability = $1, device_status = $2 WHERE device_id = $3',[availability, status, id]);
+        res.status(200).send('Device updated successfully');
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).send('Error updating device');
+    }
+});
+
+
+// เพิ่มรายการยืมคืน
+app.post('/transaction', authenticateToken, authorizeRole(['student', 'teacher', 'admin']), async (req, res) =>{
+    
+});
+
 // การยืมอุปกรณ์
-app.post('/loan', authenticateToken, authorizeRole(['student', 'teacher', 'admin']), async (req, res) => {
-    const { transaction_id, device_id, location_to_loan, quantity } = req.body;
+app.post('/transaction/loan', authenticateToken, authorizeRole(['student', 'teacher', 'admin']), async (req, res) => {
+    const { user_id, transaction_id, device_id, location_to_loan, quantity } = req.body;
     try {
         // ตรวจสอบว่ามี transaction_id ไหม
         let transaction = await db.oneOrNone('SELECT * FROM transaction WHERE transaction_id = $1', [transaction_id]);
@@ -150,7 +181,7 @@ app.post('/loan', authenticateToken, authorizeRole(['student', 'teacher', 'admin
                 res.status(400).send('You have reached the loan limit for this device');
             } else {
                 await db.tx(async t => {
-                    await t.none('INSERT INTO loan_detail (transaction_id, device_id, loan_day, loan_month, loan_year, location_to_loan, loan_approved, loan_quantity) VALUES ($1, $2, EXTRACT(DAY FROM CURRENT_DATE), EXTRACT(MONTH FROM CURRENT_DATE), EXTRACT(YEAR FROM CURRENT_DATE), $3, $4, $5)', [transaction_id, device_id, location_to_loan, false, quantity]);
+                    await t.none('INSERT INTO loan_detail (user_id, transaction_id, device_id, loan_day, loan_month, loan_year, location_to_loan, loan_approved, loan_quantity) VALUES ($1, $2, $3, EXTRACT(DAY FROM CURRENT_DATE), EXTRACT(MONTH FROM CURRENT_DATE), EXTRACT(YEAR FROM CURRENT_DATE), $4, $5, $6)', [user_id, transaction_id, device_id, location_to_loan, false, quantity]);
                 });
                 res.status(200).send('Loan request submitted successfully. Awaiting approval.');
             }
@@ -164,7 +195,7 @@ app.post('/loan', authenticateToken, authorizeRole(['student', 'teacher', 'admin
 });
 
 // ยืนยันการยืม
-app.post('/approve-loan', authenticateToken, authorizeRole(['teacher', 'admin']), async (req, res) => {
+app.post('/transaction/approve-loan', authenticateToken, authorizeRole(['teacher', 'admin']), async (req, res) => {
     const { loan_id } = req.body;
     try {
         const loanDetail = await db.oneOrNone('SELECT * FROM loan_detail WHERE loan_id = $1', [loan_id]);
@@ -184,7 +215,7 @@ app.post('/approve-loan', authenticateToken, authorizeRole(['teacher', 'admin'])
 });
 
 // การคืน
-app.post('/return', authenticateToken, authorizeRole(['student', 'teacher', 'admin']), async (req, res) => {
+app.post('/transaction/return', authenticateToken, authorizeRole(['student', 'teacher', 'admin']), async (req, res) => {
     const { device_id } = req.body;
     try {
         console.log('Device ID:', device_id);

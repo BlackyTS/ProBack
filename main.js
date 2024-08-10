@@ -155,10 +155,24 @@ app.put('/device/update', authenticateToken, authorizeRole(['teacher', 'admin'])
     }
 });
 
+// ลบอุปกรณ์
+app.delete('/device/delete', authenticateToken, authorizeRole(['teacher', 'admin']), async (req, res) => {
+    const { id } = req.body; // รับค่า id จาก body ของคำขอ
+
+    try {
+        const result = await db.query('DELETE FROM device WHERE device_id = $1 RETURNING *', [id]);       
+        res.status(200).send('Device deleted successfully');
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).send('Error deleting device');
+    }
+});
+
+
 
 // เพิ่มรายการยืมคืน
 app.post('/transaction', authenticateToken, authorizeRole(['student', 'teacher', 'admin']), async (req, res) =>{
-    
+
 });
 
 // การยืมอุปกรณ์

@@ -132,7 +132,7 @@ app.post('/devices/add', authenticateToken, authorizeRole(['teacher','admin']), 
         res.status(500).send('Error adding device');
     }
 });
-// เช็คอุปกรณ์ที่เพิ่มมา
+// เช็คอุปกรณ์ที่เพิ่มมาทั้งหมด
 app.get('/devices', authenticateToken, authorizeRole(['student', 'teacher', 'admin']), async (req, res) => {
     try {
         const devices = await db.any('SELECT * FROM device');
@@ -142,6 +142,25 @@ app.get('/devices', authenticateToken, authorizeRole(['student', 'teacher', 'adm
         res.status(500).send('Error fetching devices');
     }
 });
+// เช็คอุปกรณ์แต่ละชุด
+app.get('/devices/:id', authenticateToken, authorizeRole(['student', 'teacher', 'admin']), async (req, res) => {
+    const { id } = req.params;
+    try {
+        const device = await db.query('SELECT * FROM device WHERE device_id = $1', [id]);
+        // ตรวจสอบว่ามีผลลัพธ์หรือไม่
+        if (!device || device.length === 0) {
+            return res.status(404).json({ error: 'Device not found' });
+        }
+
+        // ส่งข้อมูลอุปกรณ์กลับไปยังผู้ใช้
+        res.status(200).json(device[0]); // หรือใช้ device ถ้ามันไม่ใช่อาร์เรย์
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).send('Error fetching device');
+    }
+});
+
+
 
 // แก้ไขสถานะอุปกรณ์
 app.put('/device/update', authenticateToken, authorizeRole(['teacher', 'admin']), async (req, res) => {

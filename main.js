@@ -119,7 +119,7 @@ app.post('/logout', authenticateToken, (req, res) => {
 });
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// การเพิ่มชุดอุปกรณ์ใหม่ (สำหรับadmin)
+// การเพิ่มชุดอุปกรณ์ใหม่
 app.post('/devices/add', authenticateToken, async (req, res) => {
     const { id, name, description, limit } = req.body;
     try {
@@ -130,6 +130,7 @@ app.post('/devices/add', authenticateToken, async (req, res) => {
         res.status(500).json({ message : 'Error adding device' });
     }
 });
+
 /// เช็คชุดอุปกรณ์ที่เพิ่มมาทั้งหมด
 app.get('/devices', authenticateToken, async (req, res) => {
     try {
@@ -221,13 +222,34 @@ app.post('/device/each-item/add', authenticateToken, async (req, res) => {
 // เช็คอุปกรณ์ที่เพิ่มมาทั้งหมด
 app.get('/device/each-item', authenticateToken, async (req, res) => {
     try {
+        // ดึงข้อมูลอุปกรณ์ทั้งหมด
         const items = await db.any('SELECT * FROM each_device');
-        res.status(200).json(items);
+
+        // ตรวจสอบว่ามีอุปกรณ์ในฐานข้อมูลหรือไม่
+        if (items.length == 0) {
+            return res.status(404).json({ message: 'No device to view' });
+        }
+
+        // นับจำนวน item_availability ที่เป็น true และ false
+        const availabilityCounts = await db.one(`
+            SELECT 
+                COUNT(*) FILTER (WHERE item_availability = true) AS available_count,
+                COUNT(*) FILTER (WHERE item_availability = false) AS unavailable_count
+            FROM each_device
+        `);
+
+        // ส่งค่าตอบกลับ
+        res.status(200).json({
+            items,
+            available_count: availabilityCounts.available_count,
+            unavailable_count: availabilityCounts.unavailable_count
+        });
     } catch (error) {
         console.error('ERROR:', error);
         res.status(500).json({ message: 'Error fetching each devices' });
     }
 });
+
 
 // เช็คอุปกรณ์แต่ละตัว
 app.get('/device/each-item/:id', authenticateToken, async (req, res) => {
@@ -249,10 +271,13 @@ app.get('/device/each-item/:id', authenticateToken, async (req, res) => {
 
 // อัพเดทอุปกรณ์
 app.put('/device/each-item/update', authenticateToken, async (req, res) => {
-    const { id, name, type, description } = req.body;  
+    const { id, name, type, description, availability } = req.body;  
     try {
-        await db.none('UPDATE each_device SET item_name = $1, item_type = $2, item_description = $3 WHERE item_id = $4',[name, type, description, id]);
-        res.status(200).json({ message: `Items updated successfully.` });
+        const result = await db.none('UPDATE each_device SET item_name = $1, item_type = $2, item_description = $3 , item_availability = $4 WHERE item_id = $5',[name, type, description, availability, id]);
+        if (!result) {
+            return res.status(404).json({ message: 'No device to update' });
+        }
+        res.status(200).json({ message: 'Items updated successfully.' });
     } catch (error) {
         console.error('ERROR:', error);
         res.status(500).json({ message: 'Error updating items.' });

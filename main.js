@@ -68,7 +68,10 @@ app.post('/register', async (req, res) => {
             return res.status(400).json({ message: 'Email already in use' });
         }
         await db.none('INSERT INTO users(user_email, user_password, user_firstname, user_lastname) VALUES($1, $2, $3, $4)', [email, hashedPassword, firstname, lastname]);
-        res.status(200).json({ message: 'User registered successfully' });
+        res.status(200).json({ 
+            message: 'User registered successfully',
+            type: "ok"
+         });
     } catch (error) {
         console.error('ERROR:', error);
         res.status(500).json({ massge : 'Error registering user'});
@@ -111,7 +114,7 @@ app.post('/login', (req, res) => {
 app.post('/devices/add', authenticateToken, async (req, res) => {
     const { id, name, description, limit } = req.body;
     try {
-        await db.none('INSERT INTO device(device_id, device_name, device_description, device_limit) VALUES($1, $2, $3, $4)', [id, name, description, limit]);
+        await db.none('INSERT INTO device(device_id, device_name, device_description, device_limit, device_availability) VALUES($1, $2, $3, $4, $5)', [id, name, description, limit, limit]);
         res.status(200).json({ message : 'Device added successfully' });
     } catch (error) {
         console.error('ERROR:', error);
@@ -171,6 +174,22 @@ app.delete('/device/delete', authenticateToken, async (req, res) => {
     }
 });
 
+// Dashborad
+app.get('/dashboard', authenticateToken, async (req, res) => {
+    try {
+        const data = [];
+        const datau = await db.one('SELECT COUNT(user_id) AS total_users FROM users');
+        const datal = await db.one('SELECT COUNT(device_id) AS total_devices FROM device');
+        const loanDetails = await db.any('SELECT device_name, COUNT(loan_detail.device_id) AS borrow_count FROM loan_detail JOIN device ON loan_detail.device_id = device.device_id GROUP BY device_name ORDER BY borrow_count DESC LIMIT 10');
+        
+        data.push({ total_users: datau.total_users, total_devices: datal.total_devices });
+        data.push({borrow_count: loanDetails.borrow_count});
+        res.status(200).json(data);
+    } catch (error) {
+        console.error('Error fetching dashboard data:', error);
+        res.status(500).send({ message: 'Error fetching dashboard data' });
+    }
+});
 
 
 app.listen(port, () => {

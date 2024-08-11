@@ -109,6 +109,16 @@ app.post('/login', (req, res) => {
         });
 });
 
+// Logout
+app.post('/logout', authenticateToken, (req, res) => {
+    res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none' });  // ลบ cookie ของ JWT token
+    res.status(200).json({ 
+        message: 'Logged out successfully',
+        type: "ok"
+    });
+});
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // การเพิ่มชุดอุปกรณ์ใหม่ (สำหรับadmin)
 app.post('/devices/add', authenticateToken, async (req, res) => {
     const { id, name, description, limit } = req.body;

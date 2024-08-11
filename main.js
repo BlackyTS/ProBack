@@ -109,8 +109,7 @@ app.post('/login', (req, res) => {
         });
 });
 
-
-// การเพิ่มอุปกรณ์ใหม่ (สำหรับadmin)
+// การเพิ่มชุดอุปกรณ์ใหม่ (สำหรับadmin)
 app.post('/devices/add', authenticateToken, async (req, res) => {
     const { id, name, description, limit } = req.body;
     try {
@@ -121,7 +120,7 @@ app.post('/devices/add', authenticateToken, async (req, res) => {
         res.status(500).json({ message : 'Error adding device' });
     }
 });
-/// เช็คอุปกรณ์ที่เพิ่มมาทั้งหมด
+/// เช็คชุดอุปกรณ์ที่เพิ่มมาทั้งหมด
 app.get('/devices', authenticateToken, async (req, res) => {
     try {
         const devices = await db.any('SELECT * FROM device');
@@ -132,13 +131,13 @@ app.get('/devices', authenticateToken, async (req, res) => {
     }
 });
 
-// เช็คอุปกรณ์แต่ละชุด
+// เช็คชุดอุปกรณ์แต่ละชุด
 app.get('/devices/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     try {
         const device = await db.query('SELECT * FROM device WHERE device_id = $1', [id]);
         // ตรวจสอบว่ามีผลลัพธ์หรือไม่
-        if (!device || device.length === 0) {
+        if (!device || device.length == 0) {
             return res.status(404).json({ massge: 'Device not found' });
         }
 
@@ -150,7 +149,7 @@ app.get('/devices/:id', authenticateToken, async (req, res) => {
     }
 });
 
-// แก้ไขอุปกรณ์
+// แก้ไขชุดอุปกรณ์
 app.put('/device/update', authenticateToken, async (req, res) => {
     const { id, name, approve, limit} = req.body;
     try {
@@ -170,7 +169,7 @@ app.put('/device/update', authenticateToken, async (req, res) => {
     }
 });
 
-// ลบอุปกรณ์
+// ลบชุดอุปกรณ์
 app.delete('/device/delete', authenticateToken, async (req, res) => {
     const { id } = req.body; // รับค่า id จาก body ของคำขอ
     try {
@@ -181,6 +180,99 @@ app.delete('/device/delete', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Error deleting device' });
     }
 });
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// เพิ่มอุปกรณ์แต่ละตัว
+app.post('/device/each-item/add', authenticateToken, async (req, res) => {
+    const { id, name, type, description, device_id } = req.body;
+
+    try {
+        // Get the device limit
+        const deviceLimitResult = await db.one('SELECT device_limit FROM device WHERE device_id = $1', [device_id]);
+        const deviceLimit = deviceLimitResult.device_limit;
+
+        // Get the count of items with the specified type
+        const itemCountResult = await db.one('SELECT COUNT(*) AS item_count FROM each_device WHERE device_id = $1 AND item_type = $2', [device_id, type]);
+        const itemCount = itemCountResult.item_count;
+
+        if (itemCount >= deviceLimit) {
+            return res.status(400).json({ message: `Cannot add more items. The limit for type ${type} has been reached.` });
+        }
+
+        // Insert the new item
+        await db.none('INSERT INTO each_device(item_id, item_name, item_type, item_description, device_id) VALUES($1, $2, $3, $4, $5)', [id, name, type, description, device_id]);
+
+        res.status(200).json({ message: `Item for type ${type} added successfully.` });
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error adding item.' });
+    }
+});
+
+// เช็คอุปกรณ์ที่เพิ่มมาทั้งหมด
+app.get('/device/each-item', authenticateToken, async (req, res) => {
+    try {
+        const items = await db.any('SELECT * FROM each_device');
+        res.status(200).json(items);
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error fetching each devices' });
+    }
+});
+
+// เช็คอุปกรณ์แต่ละตัว
+app.get('/device/each-item/:id', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    try {
+        const item = await db.query('SELECT * FROM each_device WHERE item_id = $1', [id]);
+        // ตรวจสอบว่ามีผลลัพธ์หรือไม่
+        if (!item || item == 0) {
+            return res.status(404).json({ massge: 'Device not found' });
+        }
+
+        // ส่งข้อมูลอุปกรณ์กลับไปยังผู้ใช้
+        res.status(200).json(item[0]); // หรือใช้ device ถ้ามันไม่ใช่อาร์เรย์
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error fetching device' });
+    }
+});
+
+// อัพเดทอุปกรณ์
+app.put('/device/each-item/update', authenticateToken, async (req, res) => {
+    const { id, name, type, description } = req.body;  
+    try {
+        await db.none('UPDATE each_device SET item_name = $1, item_type = $2, item_description = $3 WHERE item_id = $4',[name, type, description, id]);
+        res.status(200).json({ message: `Items updated successfully.` });
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error updating items.' });
+    }
+});
+
+// ลบอุปกรณ์
+app.delete('/device/each-item/delete', authenticateToken, async (req, res) => {
+    const { id } = req.body; // รับค่า id จาก body ของคำขอ
+    try {
+        const result = await db.query('DELETE FROM each_device WHERE item_id = $1 RETURNING *', [id]);       
+        res.status(200).json({ message: 'Device deleted successfully' });
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error deleting device' });
+    }
+});
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+
+
+
+
+
+
+
 
 // Dashborad
 app.get('/dashboard', authenticateToken, async (req, res) => {
@@ -198,7 +290,6 @@ app.get('/dashboard', authenticateToken, async (req, res) => {
         res.status(500).send({ message: 'Error fetching dashboard data' });
     }
 });
-
 
 app.listen(port, () => {
     console.log(`Server is running on http://localhost:${port}`);

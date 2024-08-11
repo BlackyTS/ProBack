@@ -150,11 +150,19 @@ app.get('/devices/:id', authenticateToken, async (req, res) => {
     }
 });
 
-// แก้ไขสถานะอุปกรณ์
+// แก้ไขอุปกรณ์
 app.put('/device/update', authenticateToken, async (req, res) => {
     const { id, name, approve, limit} = req.body;
     try {
-        await db.none('UPDATE device SET device_name = $1, device_approve = $2, device_limit = $3 WHERE device_id = $4',[name, approve, limit, id]);
+        // ดึงค่า limit และ availability ปัจจุบันจากฐานข้อมูล
+        const device = await db.one('SELECT device_limit, device_availability FROM device WHERE device_id = $1', [id]);
+
+        // คำนวณความแตกต่างของค่า limit
+        const limitDifference = limit - device.device_limit;
+
+        await db.none('UPDATE device SET device_name = $1, device_approve = $2, device_limit = $3, device_availability = device_availability + $4 WHERE device_id = $5',
+        [name, approve, limit, limitDifference, id]);
+
         res.status(200).json({ massge: 'Device updated successfully'});
     } catch (error) {
         console.error('ERROR:', error);

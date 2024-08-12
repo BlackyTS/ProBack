@@ -189,7 +189,6 @@ app.put('/device/update', authenticateToken, async (req, res) => {
 
         // คำนวณความแตกต่างของค่า limit
         const limitDifference = limit - device.device_limit;
-        console.log(`Limit Difference: ${limitDifference}`);
 
         // อัพเดตค่า limit และ availability ในตาราง device
         await db.none(
@@ -199,31 +198,28 @@ app.put('/device/update', authenticateToken, async (req, res) => {
 
         // เพิ่มรายการใหม่ใน each_device ถ้าจำนวน limit เพิ่มขึ้น
         if (limitDifference > 0) {
-            for (let i = device.device_limit + 1; i <= limit; i++) {
-                const itemId = `${i}`;
+            // ดึงรายการทั้งหมดที่มี device_id นี้จากฐานข้อมูล
+            const existingItems = await db.any('SELECT item_id FROM each_device WHERE device_id = $1', [id]);
 
-                // ตรวจสอบว่า item_id มีอยู่แล้วหรือไม่
-                const existingItem = await db.oneOrNone('SELECT item_id FROM each_device WHERE item_id = $1', [itemId]);
+            const existingItemIds = new Set(existingItems.map(item => item.item_id));
 
-                if (!existingItem) {
+            for (let i = 1; i <= limitDifference; i++) {
+                const itemId = `${id}-${i + existingItems.length}`; // เพิ่มความยาวรายการปัจจุบันไปยัง i
+
+                if (!existingItemIds.has(itemId)) {
+                    console.log(`Adding Item ID: ${itemId}`); // เพิ่ม Debugging Log
+
                     await db.none(
                         'INSERT INTO each_device (item_id, item_name, item_type, item_description, device_id, item_availability) VALUES($1, $2, $3, $4, $5, $6)',
-                        [itemId, `Item ${i}`, name, description, id, 'ready']
+                        [itemId, `Item ${i + existingItems.length}`, 'some_type', description, id, 'ready']
                     );
                 } else {
                     console.log(`Item ID ${itemId} already exists.`);
                 }
             }
-        }
-
-        // ลบรายการใน each_device ถ้าจำนวน limit ลดลง
-        if (limitDifference < 0) {
-            for (let i = limit + 1; i <= device.device_limit; i++) {
-                const itemId = `${i}`;
-                
-                // ลบรายการที่มี item_id
-                await db.none('DELETE FROM each_device WHERE item_id = $1', [itemId]);
-            }
+        } else if (limitDifference < 0) {
+            // กรณีที่ limit ลดลง ลบรายการใน each_device ให้ตรงกับ limit ใหม่
+            await db.none('DELETE FROM each_device WHERE device_id = $1 AND item_id > $2', [id, limit]);
         }
 
         res.status(200).json({ message: 'Device updated successfully' });
@@ -232,6 +228,7 @@ app.put('/device/update', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Error updating device' });
     }
 });
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // เช็คอุปกรณ์ทุกตัว
 app.get('/device/each-item', authenticateToken, async (req, res) => {

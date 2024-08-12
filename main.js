@@ -123,11 +123,31 @@ app.post('/logout', authenticateToken, (req, res) => {
 app.post('/devices/add', authenticateToken, async (req, res) => {
     const { id, name, description, limit } = req.body;
     try {
-        await db.none('INSERT INTO device(device_id, device_name, device_description, device_limit, device_availability) VALUES($1, $2, $3, $4, $5)', [id, name, description, limit, limit]);
-        res.status(200).json({ message : 'Device added successfully' });
+        // ตรวจสอบว่ามี device_id ซ้ำกันอยู่แล้วหรือไม่
+        const existingDevice = await db.oneOrNone('SELECT * FROM device WHERE device_id = $1', [id]);
+        if (existingDevice) {
+            return res.status(400).json({ message: 'Device with this ID already exists' });
+        }
+
+        // เพิ่มอุปกรณ์
+        await db.none(
+            'INSERT INTO device(device_id, device_name, device_description, device_limit, device_availability) VALUES($1, $2, $3, $4, $5)',
+            [id, name, description, limit, limit]
+        );
+
+        // เพิ่มรายการอุปกรณ์ใน each_device
+        for (let i = 1; i <= limit; i++) {
+            const itemId = `${i}`; // หรือวิธีการสร้าง ID ที่เหมาะสม
+            await db.none(
+                'INSERT INTO each_device(item_id, item_name, item_type, item_description, device_id, item_availability) VALUES($1, $2, $3, $4, $5, $6)',
+                [itemId, `Item ${i}`, name, description, id, 'ready']
+            );
+        }
+
+        res.status(200).json({ message: 'Device and items added successfully' });
     } catch (error) {
         console.error('ERROR:', error);
-        res.status(500).json({ message : 'Error adding device' });
+        res.status(500).json({ message: 'Error adding device and items' });
     }
 });
 
@@ -162,64 +182,58 @@ app.get('/devices/:id', authenticateToken, async (req, res) => {
 
 // แก้ไขชุดอุปกรณ์
 app.put('/device/update', authenticateToken, async (req, res) => {
-    const { id, name, approve, limit} = req.body;
+    const { id, name, approve, limit, description } = req.body;
     try {
         // ดึงค่า limit และ availability ปัจจุบันจากฐานข้อมูล
         const device = await db.one('SELECT device_limit, device_availability FROM device WHERE device_id = $1', [id]);
 
         // คำนวณความแตกต่างของค่า limit
         const limitDifference = limit - device.device_limit;
+        console.log(`Limit Difference: ${limitDifference}`);
 
-        await db.none('UPDATE device SET device_name = $1, device_approve = $2, device_limit = $3, device_availability = device_availability + $4 WHERE device_id = $5',
-        [name, approve, limit, limitDifference, id]);
+        // อัพเดตค่า limit และ availability ในตาราง device
+        await db.none(
+            'UPDATE device SET device_name = $1, device_approve = $2, device_limit = $3, device_availability = device_availability + $4 WHERE device_id = $5',
+            [name, approve, limit, limitDifference, id]
+        );
 
-        res.status(200).json({ massge: 'Device updated successfully'});
+        // เพิ่มรายการใหม่ใน each_device ถ้าจำนวน limit เพิ่มขึ้น
+        if (limitDifference > 0) {
+            for (let i = device.device_limit + 1; i <= limit; i++) {
+                const itemId = `${i}`;
+
+                // ตรวจสอบว่า item_id มีอยู่แล้วหรือไม่
+                const existingItem = await db.oneOrNone('SELECT item_id FROM each_device WHERE item_id = $1', [itemId]);
+
+                if (!existingItem) {
+                    await db.none(
+                        'INSERT INTO each_device (item_id, item_name, item_type, item_description, device_id, item_availability) VALUES($1, $2, $3, $4, $5, $6)',
+                        [itemId, `Item ${i}`, name, description, id, 'ready']
+                    );
+                } else {
+                    console.log(`Item ID ${itemId} already exists.`);
+                }
+            }
+        }
+
+        // ลบรายการใน each_device ถ้าจำนวน limit ลดลง
+        if (limitDifference < 0) {
+            for (let i = limit + 1; i <= device.device_limit; i++) {
+                const itemId = `${i}`;
+                
+                // ลบรายการที่มี item_id
+                await db.none('DELETE FROM each_device WHERE item_id = $1', [itemId]);
+            }
+        }
+
+        res.status(200).json({ message: 'Device updated successfully' });
     } catch (error) {
         console.error('ERROR:', error);
-        res.status(500).json({ message: 'Error updating device'});
-    }
-});
-
-// ลบชุดอุปกรณ์
-app.delete('/device/delete', authenticateToken, async (req, res) => {
-    const { id } = req.body; // รับค่า id จาก body ของคำขอ
-    try {
-        const result = await db.query('DELETE FROM device WHERE device_id = $1 RETURNING *', [id]);       
-        res.status(200).json({ message: 'Device deleted successfully' });
-    } catch (error) {
-        console.error('ERROR:', error);
-        res.status(500).json({ message: 'Error deleting device' });
+        res.status(500).json({ message: 'Error updating device' });
     }
 });
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// เพิ่มอุปกรณ์แต่ละตัว
-app.post('/device/each-item/add', authenticateToken, async (req, res) => {
-    const { id, name, type, description, device_id } = req.body;
-
-    try {
-        // Get the device limit
-        const deviceLimitResult = await db.one('SELECT device_limit FROM device WHERE device_id = $1', [device_id]);
-        const deviceLimit = deviceLimitResult.device_limit;
-
-        // Get the count of items with the specified type
-        const itemCountResult = await db.one('SELECT COUNT(*) AS item_count FROM each_device WHERE device_id = $1 AND item_type = $2', [device_id, type]);
-        const itemCount = itemCountResult.item_count;
-
-        if (itemCount >= deviceLimit) {
-            return res.status(400).json({ message: `Cannot add more items. The limit for type ${type} has been reached.` });
-        }
-
-        // Insert the new item
-        await db.none('INSERT INTO each_device(item_id, item_name, item_type, item_description, device_id) VALUES($1, $2, $3, $4, $5)', [id, name, type, description, device_id]);
-
-        res.status(200).json({ message: `Item for type ${type} added successfully.` });
-    } catch (error) {
-        console.error('ERROR:', error);
-        res.status(500).json({ message: 'Error adding item.' });
-    }
-});
-
-// เช็คอุปกรณ์ที่เพิ่มมาทั้งหมด
+// เช็คอุปกรณ์ทุกตัว
 app.get('/device/each-item', authenticateToken, async (req, res) => {
     try {
         // ดึงข้อมูลอุปกรณ์ทั้งหมด
@@ -253,7 +267,6 @@ app.get('/device/each-item', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Error fetching each devices' });
     }
 });
-
 
 // เช็คอุปกรณ์แต่ละตัว
 app.get('/device/each-item/:id', authenticateToken, async (req, res) => {
@@ -323,7 +336,33 @@ app.get('/admin/requests', authenticateToken, async (req,res) => {
 });
 
 // แก้ไขคำร้องขอ
-app.post
+app.put('/admin/requests/update', authenticateToken, async (req,res) => {
+    const { id, request_status, admin_comment } = req.body;
+    let item_availability_status;
+    if (request_status == 'waiting for approve') {
+        item_availability_status = 'ready';
+    } else if (request_status == 'approve') {
+        item_availability_status = 'borrowed';
+    } else if (request_status == 'deny') {
+        item_availability_status = 'deny';
+    } else {
+        item_availability_status = null;  
+    }
+
+    try {
+        const result = await db.result('UPDATE requests SET request_status = $1, item_availability_status = $2, admin_comment = $3 WHERE request_id = $4'
+        , [request_status, item_availability_status, admin_comment, id]);
+        // request_status มี 3 แบบ waiting for apporve รออนุมัติ, approved อนุมัติแล้ว, deny ปฏิเสธ ใส่ 3 ค่านี้ลงไปแล้ว item_availability_status จะเปลี่ยนค่าตามเงื่อไขที่กำหนดให้
+        if (result.rowCount === 0) {
+            return res.status(404).json({ message: 'Request not found' });
+        }
+
+        res.status(200).json({ message: 'Request updated successfully' });
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error updating request' });
+    }
+});
 
 
 

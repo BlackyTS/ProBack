@@ -277,7 +277,7 @@ app.get('/device/each-item/:id', authenticateToken, async (req, res) => {
 app.put('/device/each-item/update', authenticateToken, async (req, res) => {
     const { id, name, type, description, availability } = req.body;  
     try {
-        const result = await db.none('UPDATE each_device SET item_name = $1, item_type = $2, item_description = $3 , item_availability = $4 WHERE item_id = $5',[name, type, description, availability, id]);
+        const result = await db.result('UPDATE each_device SET item_name = $1, item_type = $2, item_description = $3 , item_availability = $4 WHERE item_id = $5',[name, type, description, availability, id]);
         if (!result) {
             return res.status(404).json({ message: 'No device to update' });
         }
@@ -322,8 +322,8 @@ app.get('/admin/requests', authenticateToken, async (req,res) => {
     }
 });
 
-
-
+// แก้ไขคำร้องขอ
+app.post
 
 
 

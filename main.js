@@ -233,16 +233,20 @@ app.get('/device/each-item', authenticateToken, async (req, res) => {
         // นับจำนวน item_availability ที่เป็น true และ false
         const availabilityCounts = await db.one(`
             SELECT 
-                COUNT(*) FILTER (WHERE item_availability = true) AS available_count,
-                COUNT(*) FILTER (WHERE item_availability = false) AS unavailable_count
+                COUNT(*) FILTER (WHERE item_availability = 'ready') AS ready_count,
+                COUNT(*) FILTER (WHERE item_availability = 'waiting for approve') AS waiting_for_approve_count,
+                COUNT(*) FILTER (WHERE item_availability = 'borrowed') AS borrowed_count,
+                COUNT(*) FILTER (WHERE item_availability = 'broken') AS broken_count
             FROM each_device
         `);
 
         // ส่งค่าตอบกลับ
         res.status(200).json({
             items,
-            available_count: availabilityCounts.available_count,
-            unavailable_count: availabilityCounts.unavailable_count
+            ready_count: availabilityCounts.ready_count,
+            waiting_for_approve_count: availabilityCounts.waiting_for_approve_count,
+            borrowed_count: availabilityCounts.borrowed_count,
+            broken_count: availabilityCounts.broken_count
         });
     } catch (error) {
         console.error('ERROR:', error);
@@ -296,7 +300,27 @@ app.delete('/device/each-item/delete', authenticateToken, async (req, res) => {
     }
 });
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ดูคำร้องขอ
+app.get('/admin/requests', authenticateToken, async (req,res) => {
+    try {
+        const requests = await db.any(`
+            SELECT r.request_id, u.user_email, e.item_name, r.request_status, r.request_date, r.item_availability_status, r.admin_comment
+            FROM requests r
+            JOIN users u ON r.user_id = u.user_id
+            JOIN each_device e ON r.item_id = e.item_id
+            ORDER BY r.request_date DESC;
+        `);
 
+        if (requests.length == 0) {
+            return res.status(404).json({ message: 'No requests found' });
+        }
+
+        res.status(200).json(requests);
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error fetching requests' });
+    }
+});
 
 
 
@@ -315,7 +339,7 @@ app.get('/dashboard', authenticateToken, async (req, res) => {
         const data = [];
         const datau = await db.one('SELECT COUNT(user_id) AS total_users FROM users');
         const datal = await db.one('SELECT COUNT(device_id) AS total_devices FROM device');
-        const loanDetails = await db.any('SELECT device_name, COUNT(loan_detail.device_id) AS borrow_count FROM loan_detail JOIN device ON loan_detail.device_id = device.device_id GROUP BY device_name ORDER BY borrow_count DESC LIMIT 10');
+        const loanDetails = await db.any('SELECT device_name, COUNT(loan_detail.item_id) AS borrow_count FROM loan_detail JOIN device ON loan_detail.item_id = device.device_id GROUP BY device_name ORDER BY borrow_count DESC LIMIT 10');
         
         data.push({ total_users: datau.total_users, total_devices: datal.total_devices });
         data.push({borrow_count: loanDetails.borrow_count});

@@ -395,11 +395,12 @@ app.get('/admin/requests', authenticateToken, async (req,res) => {
 });
 
 // แก้ไขคำร้องขอ
-app.put('/admin/requests/update', authenticateToken, async (req,res) => {
-    const { id, request_status, admin_comment } = req.body;
+app.put('/admin/requests/update', authenticateToken, async (req, res) => {
+    const { ids, request_status, admin_comment } = req.body;
     let item_availability_status;
+
     if (request_status == 'pending') {
-        item_availability_status = 'ready';
+        item_availability_status = 'pending';
     } else if (request_status == 'approve') {
         item_availability_status = 'borrowed';
     } else if (request_status == 'deny') {
@@ -409,39 +410,75 @@ app.put('/admin/requests/update', authenticateToken, async (req,res) => {
     }
 
     try {
-        const result = await db.result('UPDATE request SET request_status = $1, item_availability_status = $2, admin_comment = $3 WHERE request_id = $4'
-        , [request_status, item_availability_status, admin_comment, id]);
-        // request_status มี 3 แบบ pending รออนุมัติ, approved อนุมัติแล้ว, deny ปฏิเสธ ใส่ 3 ค่านี้ลงไปแล้ว item_availability_status จะเปลี่ยนค่าตามเงื่อไขที่กำหนดให้
-        if (result.rowCount === 0) {
-            return res.status(404).json({ message: 'Request not found' });
-        }
-        if (request_status == 'approve') {
-            await db.none('UPDATE device_item SET item_loaning = true WHERE item_id = (SELECT item_id FROM request WHERE request_id = $1)',[id] );
-        } else if (request_status == 'pending' || request_status == 'deny') {
-            await db.none('UPDATE device_item SET item_loaning = false WHERE item_id = (SELECT item_id FROM request WHERE request_id = $1)',[id] );
-        }
+        await db.tx(async t => {
+            for (const id of ids) {
+                const result = await t.result(
+                    'UPDATE request SET request_status = $1, item_availability_status = $2, admin_comment = $3 WHERE request_id = $4',
+                    [request_status, item_availability_status, admin_comment, id]
+                );
 
-        res.status(200).json({ message: 'Request updated successfully' });
+                if (result.rowCount == 0) {
+                    return res.status(404).json({ message: `Request with id ${id} not found` });
+                }
+
+                if (request_status == 'approve') {
+                    await t.none(
+                        'UPDATE device_item SET item_loaning = true, item_availability = $1 WHERE item_id = (SELECT item_id FROM request WHERE request_id = $2)',
+                        ["borrowed", id]
+                    );
+                } else if (request_status == 'pending' || request_status == 'deny') {
+                    await t.none(
+                        'UPDATE device_item SET item_loaning = false, item_availability = $1 WHERE item_id = (SELECT item_id FROM request WHERE request_id = $2)',
+                        ["pending", id]
+                    )
+                }
+            }
+        });
+
+        res.status(200).json({ message: 'Requests updated successfully' });
     } catch (error) {
         console.error('ERROR:', error);
-        res.status(500).json({ message: 'Error updating request' });
+        res.status(500).json({ message: 'Error updating requests' });
     }
 });
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ***ฟังก์ชัน USER***
 // user ขอคำร้องขอยืม
 app.post('/user/request', async (req, res) => {
-    const { user_id, item_id, request_status, return_date } = req.body;
-    const itemAvailabilityStatus = 'ready';
+    const { user_id, item_ids, request_status, return_date } = req.body;
+    let itemAvailabilityStatus = 'ready';
+
+    // เปลี่ยน itemAvailabilityStatus เป็น 'pending' ถ้า request_status เป็น 'pending'
+    if (request_status === 'pending') {
+        itemAvailabilityStatus = 'pending';
+    }
 
     try {
         const result = await db.one('SELECT COALESCE(MAX(request_id), 0) AS max_id FROM request');
-        const nextId = result.max_id + 1;
+        let nextId = result.max_id + 1;
 
-        await db.none(
-            'INSERT INTO request(request_id, user_id, item_id, request_status, return_date, item_availability_status) VALUES($1, $2, $3, $4, $5, $6)',
-            [nextId, user_id, item_id, request_status, return_date, itemAvailabilityStatus]
-        );
+        await db.tx(async t => {
+            for (let i = 0; i < item_ids.length; i++) {
+                const item_id = item_ids[i];
+
+                // อัปเดต request table
+                await t.none(
+                    'INSERT INTO request(request_id, user_id, item_id, request_status, return_date, item_availability_status) VALUES($1, $2, $3, $4, $5, $6)',
+                    [nextId, user_id, item_id, request_status, return_date, itemAvailabilityStatus]
+                );
+
+                // อัปเดต item_availability_status ใน device_item ถ้า request_status เป็น 'pending'
+                if (request_status == 'pending') {
+                    await t.none(
+                        'UPDATE device_item SET item_availability = $1 WHERE item_id = $2',
+                        [itemAvailabilityStatus, item_id]
+                    );
+                }
+
+                nextId++;
+            }
+        });
 
         res.status(200).json({ message: 'Add request successfully' });
     } catch (error) {
@@ -449,6 +486,10 @@ app.post('/user/request', async (req, res) => {
         res.status(500).json({ message: 'Error to request' });
     }
 });
+
+
+
+
 
 
 

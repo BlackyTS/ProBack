@@ -321,47 +321,47 @@ app.delete('/devices/delete', authenticateToken, async (req, res) => {
 // });
 
 // เช็คอุปกรณ์แต่ละตัว
-app.get('/device/each-item/:id', authenticateToken, async (req, res) => {
-    const { id } = req.params;
-    try {
-        const item = await db.query('SELECT * FROM device_item WHERE item_id = $1', [id]);
-        // ตรวจสอบว่ามีผลลัพธ์หรือไม่
-        if (!item || item == 0) {
-            return res.status(404).json({ massge: 'Device not found' });
-        }
-        res.status(200).json(item[0]); 
-    } catch (error) {
-        console.error('ERROR:', error);
-        res.status(500).json({ message: 'Error fetching device' });
-    }
-});
+// app.get('/device/each-item/:id', authenticateToken, async (req, res) => {
+//     const { id } = req.params;
+//     try {
+//         const item = await db.query('SELECT * FROM device_item WHERE item_id = $1', [id]);
+//         // ตรวจสอบว่ามีผลลัพธ์หรือไม่
+//         if (!item || item == 0) {
+//             return res.status(404).json({ massge: 'Device not found' });
+//         }
+//         res.status(200).json(item[0]); 
+//     } catch (error) {
+//         console.error('ERROR:', error);
+//         res.status(500).json({ message: 'Error fetching device' });
+//     }
+// });
 
-// อัพเดทอุปกรณ์
-app.put('/device/each-item/update', authenticateToken, async (req, res) => {
-    const { id, name, type, description, availability } = req.body;  
-    try {
-        const result = await db.result('UPDATE device_item SET item_name = $1, item_type = $2, item_description = $3 , item_availability = $4 WHERE item_id = $5',[name, type, description, availability, id]);
-        if (!result) {
-            return res.status(404).json({ message: 'No device to update' });
-        }
-        res.status(200).json({ message: 'Items updated successfully.' });
-    } catch (error) {
-        console.error('ERROR:', error);
-        res.status(500).json({ message: 'Error updating items.' });
-    }
-});
+// // อัพเดทอุปกรณ์
+// app.put('/device/each-item/update', authenticateToken, async (req, res) => {
+//     const { id, name, type, description, availability } = req.body;  
+//     try {
+//         const result = await db.result('UPDATE device_item SET item_name = $1, item_type = $2, item_description = $3 , item_availability = $4 WHERE item_id = $5',[name, type, description, availability, id]);
+//         if (!result) {
+//             return res.status(404).json({ message: 'No device to update' });
+//         }
+//         res.status(200).json({ message: 'Items updated successfully.' });
+//     } catch (error) {
+//         console.error('ERROR:', error);
+//         res.status(500).json({ message: 'Error updating items.' });
+//     }
+// });
 
-// ลบอุปกรณ์
-app.delete('/device/each-item/delete', authenticateToken, async (req, res) => {
-    const { id } = req.body; // รับค่า id จาก body ของคำขอ
-    try {
-        const result = await db.query('DELETE FROM device_item WHERE item_id = $1 RETURNING *', [id]);       
-        res.status(200).json({ message: 'Device deleted successfully' });
-    } catch (error) {
-        console.error('ERROR:', error);
-        res.status(500).json({ message: 'Error deleting device' });
-    }
-});
+// // ลบอุปกรณ์
+// app.delete('/device/each-item/delete', authenticateToken, async (req, res) => {
+//     const { id } = req.body; // รับค่า id จาก body ของคำขอ
+//     try {
+//         const result = await db.query('DELETE FROM device_item WHERE item_id = $1 RETURNING *', [id]);       
+//         res.status(200).json({ message: 'Device deleted successfully' });
+//     } catch (error) {
+//         console.error('ERROR:', error);
+//         res.status(500).json({ message: 'Error deleting device' });
+//     }
+// });
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ดูคำร้องขอ
 app.get('/admin/loan_detail', authenticateToken, async (req,res) => {

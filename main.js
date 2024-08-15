@@ -331,23 +331,20 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
 // ***ฟังก์ชัน การยืม***
 // user ขอคำร้องยืนยันการยืม
 app.post('/loan', authenticateToken, async (req, res) => {
-    const { device_id, quantity, loan_status, due_date } = req.body;
+    const { device_id, quantity, due_date } = req.body;
     let itemAvailabilityStatus = 'ready'; // ready = 1
-
-    if (loan_status === 'pending') {
+    const loan_status = 'pending';
+    if (loan_status == 'pending') {
         itemAvailabilityStatus = 'pending'; // pending = 2
     }
-
     try {
         // ตรวจสอบว่ามี device_id และ quantity ที่ถูกต้อง
         if (!device_id || !quantity || quantity <= 0) {
             return res.status(400).json({ message: 'Invalid selection. Please provide a valid device_id and quantity.' });
         }
-
         // ดึง user_id จาก req.user หลังจากการตรวจสอบ token
         const user_id = req.user.id;
         console.log('User ID:', user_id);
-
         // เริ่มต้น transaction
         await db.tx(async t => {
             // ค้นหา item_id ที่พร้อมใช้งาน (ready) สำหรับ device_id ที่ระบุ
@@ -355,17 +352,14 @@ app.post('/loan', authenticateToken, async (req, res) => {
                 'SELECT item_id FROM device_item WHERE device_id = $1 AND item_availability = $2 ORDER BY item_id ASC',
                 [device_id, 'ready']
             );
-
             // ตรวจสอบว่ามีจำนวน item_id เพียงพอหรือไม่
             if (availableItems.length < quantity) {
                 return res.status(400).json({
                     message: `Not enough items available. Only ${availableItems.length} items are ready for borrowing.`
                 });
             }
-
             // เลือก item_id ตามจำนวนที่ต้องการยืม
             const selectedItems = availableItems.slice(0, quantity);
-
             // อัปเดตสถานะของ item_ids ที่ต้องการยืม
             for (const item of selectedItems) {
                 const item_id = item.item_id;
@@ -376,22 +370,19 @@ app.post('/loan', authenticateToken, async (req, res) => {
                     'INSERT INTO loan_detail(loan_id, user_id, item_id, loan_status, due_date, item_availability_status) VALUES($1, $2, $3, $4, $5, $6)',
                     [nextId, user_id, item_id, loan_status, due_date, itemAvailabilityStatus]
                 );
-
                 // อัปเดตสถานะ item_availability ใน device_item ถ้า loan_status เป็น pending
-                if (loan_status === 'pending') {
+                if (loan_status == 'pending') {
                     await t.none(
                         'UPDATE device_item SET item_availability = $1 WHERE item_id = $2',
                         [itemAvailabilityStatus, item_id]
                     );
                 }
             }
-
             // อัปเดตค่า device_availability ในตาราง device โดยนับจำนวน item_availability ที่มีสถานะ ready
             const updatedAvailability = await t.one(
                 'SELECT COUNT(*) AS ready_count FROM device_item WHERE device_id = $1 AND item_availability = $2',
                 [device_id, 'ready']
             );
-
             await t.none(
                 'UPDATE device SET device_availability = $1 WHERE device_id = $2',
                 [updatedAvailability.ready_count, device_id]
@@ -407,14 +398,11 @@ app.post('/loan', authenticateToken, async (req, res) => {
     }
 });
 
-
-
-
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ***ฟังก์ชันการคืน***
 // user ยืนยันคืน
 app.post('/return', authenticateToken, async (req, res) => {
-    const { return_status, location } = req.body;
+    const { return_status, location, comment} = req.body;
 
     try {
         // ดึง user_id จาก token หลังจากการตรวจสอบ token
@@ -450,8 +438,8 @@ app.post('/return', authenticateToken, async (req, res) => {
                 const nextId = result.max_id + 1;
 
                 await t.none(
-                    'INSERT INTO return_detail(return_id, user_id, item_id, return_status, location_to_return) VALUES($1, $2, $3, $4, $5)',
-                    [nextId, user_id, item_id, return_status, location]
+                    'INSERT INTO return_detail(return_id, user_id, item_id, return_status, location_to_return, return_comment) VALUES($1, $2, $3, $4, $5, $6)',
+                    [nextId, user_id, item_id, return_status, location, comment]
                 );
 
                 // อัปเดต loan_detail table ให้ return_date เป็นวันที่ปัจจุบัน

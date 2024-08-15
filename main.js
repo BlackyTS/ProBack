@@ -138,33 +138,24 @@ app.delete('/delete', authenticateToken, async (req, res) => {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // การเพิ่มชุดอุปกรณ์ใหม่
 app.post('/devices/add', authenticateToken, async (req, res) => {
-    const { type, description, limit } = req.body;
+    const { name, description, limit } = req.body;
     try {
-        // หา device_id สูงสุดที่มีอยู่ในฐานข้อมูล
-        const result = await db.one('SELECT COALESCE(MAX(device_id), 0) AS max_id FROM device');
-        const nextId = result.max_id + 1;
-        // เพิ่มอุปกรณ์ใหม่ด้วย device_id ที่คำนวณได้
-        await db.none(
-            'INSERT INTO device(device_id, device_name, device_description, device_limit, device_availability) VALUES($1, $2, $3, $4, $5)',
-            [nextId, type, description, limit, limit]
+        // เพิ่มอุปกรณ์เข้าในตาราง device โดยไม่ต้องระบุ device_id
+        const result = await db.one(
+            'INSERT INTO device(device_name, device_description, device_limit, device_availability) VALUES($1, $2, $3, $4) RETURNING device_id',
+            [name, description, limit, limit]
         );
-        // ตรวจสอบ item_id ที่มีอยู่แล้ว
-        const existingItemIds = await db.any('SELECT item_id FROM device_item');
-        const existingItemIdsSet = new Set(existingItemIds.map(row => row.item_id));
-        // เพิ่มรายการอุปกรณ์ใน each_device
-        for (let i = 1; i <= limit; i++) {
-            // ตรวจสอบว่า item_id ซ้ำกันหรือไม่
-            let itemId = i;
-            while (existingItemIdsSet.has(itemId)) {
-                itemId++;
-            }
-            existingItemIdsSet.add(itemId);
 
+        const deviceId = result.device_id;
+
+        // เพิ่มรายการอุปกรณ์ใน device_items
+        for (let i = 1; i <= limit; i++) {
             await db.none(
-                'INSERT INTO device_item(item_id, item_name, item_type, item_description, device_id, item_availability) VALUES($1, $2, $3, $4, $5, $6)',
-                [itemId, `Item ${i}`, type, description, nextId, 'ready']
+                'INSERT INTO device_item(item_name, item_description, device_id, item_availability) VALUES($1, $2, $3, $4)',
+                [`${name} ${i}`, description, deviceId, 'ready']
             );
         }
+        
         res.status(200).json({ message: 'Device and items added successfully' });
     } catch (error) {
         console.error('ERROR:', error);
@@ -189,12 +180,12 @@ app.get('/devices/:id', authenticateToken, async (req, res) => {
     try {
         const device = await db.query('SELECT * FROM device WHERE device_id = $1', [id]);
         // ตรวจสอบว่ามีผลลัพธ์หรือไม่
-        if (!device || device.length == 0) {
+        if (!device) {
             return res.status(404).json({ massge: 'Device not found' });
         }
-
+        const items = await db.any('SELECT * FROM device_item WHERE device_id = $1',[id])
         // ส่งข้อมูลอุปกรณ์กลับไปยังผู้ใช้
-        res.status(200).json(device[0]); // หรือใช้ device ถ้ามันไม่ใช่อาร์เรย์
+        res.status(200).json({device,items}); // หรือใช้ device ถ้ามันไม่ใช่อาร์เรย์
     } catch (error) {
         console.error('ERROR:', error);
         res.status(500).json({ message: 'Error fetching device' });
@@ -203,33 +194,37 @@ app.get('/devices/:id', authenticateToken, async (req, res) => {
 
 // แก้ไขชุดอุปกรณ์
 app.put('/device/update', authenticateToken, async (req, res) => {
-    const { id, type, approve, limit, description } = req.body;
+    const { id, name, limit, description, approve } = req.body;
+
     try {
-        // ดึงค่า limit และ availability ปัจจุบันจากฐานข้อมูล
+        // ดึงข้อมูลปัจจุบันของอุปกรณ์จากฐานข้อมูล
         const device = await db.one('SELECT device_limit, device_availability FROM device WHERE device_id = $1', [id]);
+
+        // คำนวณความแตกต่างของ limit
         const limitDifference = limit - device.device_limit;
-        // อัพเดทข้อมูลอุปกรณ์ในฐานข้อมูล
+
+        // อัพเดตค่า limit, availability และ approve ในตาราง device
         await db.none(
-            'UPDATE device SET device_name = $1, device_approve = $2, device_limit = $3, device_availability = device_availability + $4 WHERE device_id = $5',
-            [type, approve, limit, limitDifference, id]
+            'UPDATE device SET device_name = $1, device_limit = $2, device_availability = device_availability + $3, device_approve = $4 WHERE device_id = $5',
+            [name, limit, limitDifference, approve, id]
         );
 
+        // ถ้าจำนวน limit เพิ่มขึ้น, เพิ่มรายการใหม่ใน device_items
         if (limitDifference > 0) {
-            // เพิ่มรายการใหม่ใน each_device
             for (let i = device.device_limit + 1; i <= limit; i++) {
-                const itemId = i;  // กำหนด item_id เป็นตัวเลข
                 await db.none(
-                    'INSERT INTO device_item (item_id, item_name, item_type, item_description, device_id, item_availability) VALUES($1, $2, $3, $4, $5, $6)',
-                    [itemId, `Item ${i}`, type, description, id, 'ready']
+                    'INSERT INTO device_item (item_name, item_description, item_availability, device_id) VALUES($1, $2, $3, $4)',
+                    [`${name} ${i}`, description, 'ready', id]
                 );
             }
-        } else if (limitDifference < 0) {
-            // ลบรายการใน each_device ถ้าจำนวน limit ลดลง
-            await db.none(
-                'DELETE FROM device_item WHERE device_id = $1 AND item_id > $2',
-                [id, limit]
-            );
+        } 
+        // ถ้าจำนวน limit ลดลง, ลบรายการใน device_items
+        else if (limitDifference < 0) {
+            for (let i = device.device_limit; i > limit; i--) {
+                await db.none('DELETE FROM device_item WHERE device_id = $1 AND item_name = $2', [id, `Item ${i}`]);
+            }
         }
+
         res.status(200).json({ message: 'Device updated successfully' });
     } catch (error) {
         console.error('ERROR:', error);
@@ -432,13 +427,19 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
 // ***ฟังก์ชัน USER***
 // user ขอคำร้องขอยืม
 app.post('/loan', authenticateToken, async (req, res) => {
-    const { user_id, item_ids, loan_status, due_date } = req.body;
+    const { item_ids, loan_status, due_date } = req.body;
     let itemAvailabilityStatus = 'ready';
+
     // เปลี่ยน itemAvailabilityStatus เป็น 'pending' ถ้า loan_status เป็น 'pending'
     if (loan_status == 'pending') {
         itemAvailabilityStatus = 'pending';
     }
+
     try {
+        const token = req.cookies.token;
+        const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+        const user_id = decodedToken.user_id;
+        console.log(decodedToken)
         // เริ่มต้น transaction
         await db.tx(async t => {
             // ตรวจสอบ item_ids และสร้าง loan_detail
@@ -448,19 +449,22 @@ app.post('/loan', authenticateToken, async (req, res) => {
                     'SELECT item_availability FROM device_item WHERE item_id = $1',
                     [item_id]
                 );           
-                if (itemStatusResult && (itemStatusResult.item_availability == 'pending' || itemStatusResult.item_availability == 'borrowed')) {
+                if (itemStatusResult && (itemStatusResult.item_availability === 'pending' || itemStatusResult.item_availability === 'borrowed')) {
                     // ส่งการตอบกลับเมื่อพบ item ที่ไม่สามารถยืมได้
                     return t.none('ROLLBACK')
                         .then(() => res.status(400).json({ message: `Item with id ${item_id} cannot be borrowed` }));
                 }
+
                 // ดึง loan_id สูงสุดและเพิ่มค่า
                 const result = await t.one('SELECT COALESCE(MAX(loan_id), 0) AS max_id FROM loan_detail');
                 const nextId = result.max_id + 1;
-           // อัปเดต loan_detail table
+
+                // อัปเดต loan_detail table
                 await t.none(
                     'INSERT INTO loan_detail(loan_id, user_id, item_id, loan_status, due_date, item_availability_status) VALUES($1, $2, $3, $4, $5, $6)',
                     [nextId, user_id, item_id, loan_status, due_date, itemAvailabilityStatus]
                 );
+
                 // อัปเดต item_availability_status ใน device_item ถ้า loan_status เป็น 'pending'
                 if (loan_status == 'pending') {
                     await t.none(
@@ -469,6 +473,7 @@ app.post('/loan', authenticateToken, async (req, res) => {
                     );
                 }
             }
+
             res.status(200).json({ message: 'Add request successfully' });
         });
     } catch (error) {
@@ -489,6 +494,10 @@ app.post('/return', authenticateToken, async (req, res) => {
     }
 
     try {
+        const token = req.cookies.token;
+        const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+        const user_id = decodedToken.user_id;
+        console.log(decodedToken)
         // เริ่มต้น transaction
         await db.tx(async t => {
             // ตรวจสอบและคืนอุปกรณ์
@@ -567,17 +576,28 @@ app.post('/return', authenticateToken, async (req, res) => {
 
 
 
-// Dashborad
 app.get('/dashboard', authenticateToken, async (req, res) => {
     try {
-        const data = [];
-        const datau = await db.one('SELECT COUNT(user_id) AS total_users FROM users');
-        const datal = await db.one('SELECT COUNT(device_id) AS total_devices FROM device');
-        const loanDetails = await db.any('SELECT device_name, COUNT(loan_detail.item_id) AS borrow_count FROM loan_detail JOIN device ON loan_detail.item_id = device.device_id GROUP BY device_name ORDER BY borrow_count DESC LIMIT 10');
-        
-        data.push({ total_users: datau.total_users, total_devices: datal.total_devices });
-        data.push({borrow_count: loanDetails.borrow_count});
-        res.status(200).json(data);
+        // ดึงจำนวนผู้ใช้ทั้งหมด
+        const totalUsers = await db.one('SELECT COUNT(user_id) AS total_users FROM users');
+        // ดึงจำนวนอุปกรณ์ทั้งหมด
+        const totalDevices = await db.one('SELECT COUNT(item_id) AS total_devices FROM device_item');
+        // ดึงข้อมูลการยืมอุปกรณ์
+        // const loanDetails = await db.any(`
+        //     SELECT device_name, COUNT(loan_detail.device_id) AS borrow_count
+        //     FROM loan_detail
+        //     JOIN device_items ON loan_detail.device_id = device_items.item_id
+        //     GROUP BY device_name
+        //     ORDER BY borrow_count DESC
+        //     LIMIT 10
+        // `);
+
+        // ส่งข้อมูลกลับ
+        res.status(200).json({
+            total_users: totalUsers.total_users,
+            total_devices: totalDevices.total_devices,
+            // loan_details: loanDetails
+        });
     } catch (error) {
         console.error('Error fetching dashboard data:', error);
         res.status(500).send({ message: 'Error fetching dashboard data' });

@@ -331,30 +331,44 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
 // ***ฟังก์ชัน การยืม***
 // user ขอคำร้องยืนยันการยืม
 app.post('/loan', authenticateToken, async (req, res) => {
-    const { item_ids, loan_status, due_date } = req.body;
+    const { device_id, quantity, loan_status, due_date } = req.body;
     let itemAvailabilityStatus = 'ready'; // ready = 1
 
-    if (loan_status == 'pending') {
+    if (loan_status === 'pending') {
         itemAvailabilityStatus = 'pending'; // pending = 2
     }
 
     try {
+        // ตรวจสอบว่ามี device_id และ quantity ที่ถูกต้อง
+        if (!device_id || !quantity || quantity <= 0) {
+            return res.status(400).json({ message: 'Invalid selection. Please provide a valid device_id and quantity.' });
+        }
+
         // ดึง user_id จาก req.user หลังจากการตรวจสอบ token
         const user_id = req.user.id;
         console.log('User ID:', user_id);
 
+        // เริ่มต้น transaction
         await db.tx(async t => {
-            for (const item_id of item_ids) {
-                const itemStatusResult = await t.oneOrNone(
-                    'SELECT item_availability FROM device_item WHERE item_id = $1',
-                    [item_id]
-                );
+            // ค้นหา item_id ที่พร้อมใช้งาน (ready) สำหรับ device_id ที่ระบุ
+            const availableItems = await t.any(
+                'SELECT item_id FROM device_item WHERE device_id = $1 AND item_availability = $2 ORDER BY item_id ASC',
+                [device_id, 'ready']
+            );
 
-                if (itemStatusResult && (itemStatusResult.item_availability == 'pending' || itemStatusResult.item_availability == 'borrowed')) {
-                    return t.none('ROLLBACK')
-                        .then(() => res.status(400).json({ message: `Item with id ${item_id} cannot be borrowed` }));
-                }
+            // ตรวจสอบว่ามีจำนวน item_id เพียงพอหรือไม่
+            if (availableItems.length < quantity) {
+                return res.status(400).json({
+                    message: `Not enough items available. Only ${availableItems.length} items are ready for borrowing.`
+                });
+            }
 
+            // เลือก item_id ตามจำนวนที่ต้องการยืม
+            const selectedItems = availableItems.slice(0, quantity);
+
+            // อัปเดตสถานะของ item_ids ที่ต้องการยืม
+            for (const item of selectedItems) {
+                const item_id = item.item_id;
                 const result = await t.one('SELECT COALESCE(MAX(loan_id), 0) AS max_id FROM loan_detail');
                 const nextId = result.max_id + 1;
 
@@ -363,7 +377,8 @@ app.post('/loan', authenticateToken, async (req, res) => {
                     [nextId, user_id, item_id, loan_status, due_date, itemAvailabilityStatus]
                 );
 
-                if (loan_status == 2) {
+                // อัปเดตสถานะ item_availability ใน device_item ถ้า loan_status เป็น pending
+                if (loan_status === 'pending') {
                     await t.none(
                         'UPDATE device_item SET item_availability = $1 WHERE item_id = $2',
                         [itemAvailabilityStatus, item_id]
@@ -371,37 +386,55 @@ app.post('/loan', authenticateToken, async (req, res) => {
                 }
             }
 
-            res.status(200).json({ message: 'Add request successfully' });
+            // อัปเดตค่า device_availability ในตาราง device โดยนับจำนวน item_availability ที่มีสถานะ ready
+            const updatedAvailability = await t.one(
+                'SELECT COUNT(*) AS ready_count FROM device_item WHERE device_id = $1 AND item_availability = $2',
+                [device_id, 'ready']
+            );
+
+            await t.none(
+                'UPDATE device SET device_availability = $1 WHERE device_id = $2',
+                [updatedAvailability.ready_count, device_id]
+            );
+
+            res.status(200).json({ message: 'Loan request processed successfully' });
         });
     } catch (error) {
         console.error('ERROR:', error);
         if (!res.headersSent) {
-            res.status(500).json({ message: 'Error to request' });
+            res.status(500).json({ message: 'Error processing loan request' });
         }
     }
 });
+
+
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ***ฟังก์ชันการคืน***
 // user ยืนยันคืน
 app.post('/return', authenticateToken, async (req, res) => {
-    const { user_id, item_ids, return_status, location } = req.body;
-
-    // ตรวจสอบให้แน่ใจว่า item_ids เป็นอาร์เรย์
-    if (!Array.isArray(item_ids)) {
-        return res.status(400).json({ message: 'item_ids should be an array' });
-    }
+    const { return_status, location } = req.body;
 
     try {
-        const token = req.cookies.token;
-        const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
-        const user_id = decodedToken.user_id;
-        console.log(decodedToken)
+        // ดึง user_id จาก token หลังจากการตรวจสอบ token
+        const user_id = req.user.id;
+
+        // ดึงรายการ item_id ที่ user_id นี้ยืมไปและยังไม่ได้คืน
+        const borrowedItems = await db.any(
+            'SELECT item_id FROM loan_detail WHERE user_id = $1 AND return_date IS NULL',
+            [user_id]
+        );
+
+        if (borrowedItems.length === 0) {
+            return res.status(400).json({ message: 'No borrowed items found for this user' });
+        }
+
         // เริ่มต้น transaction
         await db.tx(async t => {
-            // ตรวจสอบและคืนอุปกรณ์
-            for (const item_id of item_ids) {
+            for (const item of borrowedItems) {
+                const item_id = item.item_id;
+
                 // ดึง loan_id ล่าสุดที่ยังไม่ได้คืนจาก loan_detail
                 const loanDetail = await t.oneOrNone(
                     'SELECT loan_id FROM loan_detail WHERE item_id = $1 AND return_date IS NULL',
@@ -409,7 +442,6 @@ app.post('/return', authenticateToken, async (req, res) => {
                 );
 
                 if (!loanDetail) {
-                    // ส่งการตอบกลับเมื่อไม่พบ loan_id ที่เกี่ยวข้อง
                     return res.status(400).json({ message: `No active loan found for item with id ${item_id}` });
                 }
 
@@ -421,22 +453,41 @@ app.post('/return', authenticateToken, async (req, res) => {
                     'INSERT INTO return_detail(return_id, user_id, item_id, return_status, location_to_return) VALUES($1, $2, $3, $4, $5)',
                     [nextId, user_id, item_id, return_status, location]
                 );
+
                 // อัปเดต loan_detail table ให้ return_date เป็นวันที่ปัจจุบัน
                 await t.none(
                     'UPDATE loan_detail SET return_date = CURRENT_DATE WHERE loan_id = $1',
                     [loanDetail.loan_id]
                 );
+
                 // อัปเดต item_availability_status ใน device_item ให้กลับไปเป็น 'ready'
                 await t.none(
                     'UPDATE device_item SET item_availability = $1, item_loaning = false WHERE item_id = $2',
                     ['ready', item_id]
                 );
-                // อัปเดต loan_status, item_availability_status ใน loan_detail ให้เป็น complete เพื่อยืนยันว่ารายการนี้สำเร็จแล้ว
+
+                // อัปเดต loan_status, item_availability_status ใน loan_detail ให้เป็น complete
                 await t.none(
                     'UPDATE loan_detail SET loan_status = $1, item_availability_status = $2 WHERE item_id = $3',
                     ['complete', 'complete', item_id]
                 );
             }
+
+            // อัปเดตจำนวนอุปกรณ์ใน device table
+            await t.none(
+                `UPDATE device 
+                 SET device_availability = (
+                     SELECT COUNT(*) 
+                     FROM device_item 
+                     WHERE device_id = device.device_id 
+                     AND item_availability = 'ready'
+                 ) 
+                 WHERE device_id IN (
+                     SELECT DISTINCT device_id 
+                     FROM device_item 
+                     WHERE item_id IN (${borrowedItems.map(item => item.item_id).join(',')})
+                 )`
+            );
 
             // ส่งการตอบกลับเมื่อดำเนินการสำเร็จ
             res.status(200).json({ message: 'Return processed successfully' });

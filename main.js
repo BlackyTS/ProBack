@@ -33,6 +33,7 @@ const connectionOptions = {
 }
 
 const db = pgp(connectionOptions);
+app.use(cookieParser());
 
 //JWT function
 const generateToken = (user) => {
@@ -42,7 +43,7 @@ const generateToken = (user) => {
 // ฟังก์ชัน Middleware สำหรับการตรวจสอบ JWT token
 const authenticateToken = (req, res, next) => {
     const token = req.cookies['token'];
-    if (token == null) {
+    if (!token) {
         console.log('No token provided');
         return res.sendStatus(401); 
     }
@@ -261,103 +262,6 @@ app.delete('/devices/delete', authenticateToken, async (req, res) => {
 });
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// เช็คอุปกรณ์ทุกตัว
-// app.get('/device/each-item', authenticateToken, async (req, res) => {
-//     try {
-//         // ดึงข้อมูลอุปกรณ์ทั้งหมด
-//         const items = await db.any('SELECT * FROM each_device');
-
-//         // ตรวจสอบว่ามีอุปกรณ์ในฐานข้อมูลหรือไม่
-//         if (items.length == 0) {
-//             return res.status(404).json({ message: 'No device to view' });
-//         }
-
-//         // นับจำนวน item_availability ที่เป็นแต่ละสถานะ
-//         const availabilityCounts = await db.one(`
-//             SELECT 
-//                 COUNT(*) FILTER (WHERE item_availability = 'ready') AS ready_count,
-//                 COUNT(*) FILTER (WHERE item_availability = 'waiting for approve') AS waiting_for_approve_count,
-//                 COUNT(*) FILTER (WHERE item_availability = 'borrowed') AS borrowed_count,
-//                 COUNT(*) FILTER (WHERE item_availability = 'broken') AS broken_count
-//             FROM each_device
-//         `);
-
-//         // ส่งค่าตอบกลับ
-//         res.status(200).json({
-//             items,
-//             ready_count: availabilityCounts.ready_count,
-//             waiting_for_approve_count: availabilityCounts.waiting_for_approve_count,
-//             borrowed_count: availabilityCounts.borrowed_count,
-//             broken_count: availabilityCounts.broken_count
-//         });
-//     } catch (error) {
-//         console.error('ERROR:', error);
-//         res.status(500).json({ message: 'Error fetching each devices' });
-//     }
-// });
-
-
-// // เช็คอุปกรณ์แต่ละตัว
-// app.get('/device/each-item/:id', authenticateToken, async (req, res) => {
-//     const { id } = req.params;
-//     try {
-//         const item = await db.query('SELECT * FROM each_device WHERE item_id = $1', [id]);
-//         // ตรวจสอบว่ามีผลลัพธ์หรือไม่
-//         if (!item || item == 0) {
-//             return res.status(404).json({ massge: 'Device not found' });
-//         }
-
-//         // ส่งข้อมูลอุปกรณ์กลับไปยังผู้ใช้
-//         res.status(200).json(item[0]); // หรือใช้ device ถ้ามันไม่ใช่อาร์เรย์
-//     } catch (error) {
-//         console.error('ERROR:', error);
-//         res.status(500).json({ message: 'Error fetching device' });
-//     }
-// });
-
-// เช็คอุปกรณ์แต่ละตัว
-// app.get('/device/each-item/:id', authenticateToken, async (req, res) => {
-//     const { id } = req.params;
-//     try {
-//         const item = await db.query('SELECT * FROM device_item WHERE item_id = $1', [id]);
-//         // ตรวจสอบว่ามีผลลัพธ์หรือไม่
-//         if (!item || item == 0) {
-//             return res.status(404).json({ massge: 'Device not found' });
-//         }
-//         res.status(200).json(item[0]); 
-//     } catch (error) {
-//         console.error('ERROR:', error);
-//         res.status(500).json({ message: 'Error fetching device' });
-//     }
-// });
-
-// // อัพเดทอุปกรณ์
-// app.put('/device/each-item/update', authenticateToken, async (req, res) => {
-//     const { id, name, type, description, availability } = req.body;  
-//     try {
-//         const result = await db.result('UPDATE device_item SET item_name = $1, item_type = $2, item_description = $3 , item_availability = $4 WHERE item_id = $5',[name, type, description, availability, id]);
-//         if (!result) {
-//             return res.status(404).json({ message: 'No device to update' });
-//         }
-//         res.status(200).json({ message: 'Items updated successfully.' });
-//     } catch (error) {
-//         console.error('ERROR:', error);
-//         res.status(500).json({ message: 'Error updating items.' });
-//     }
-// });
-
-// // ลบอุปกรณ์
-// app.delete('/device/each-item/delete', authenticateToken, async (req, res) => {
-//     const { id } = req.body; // รับค่า id จาก body ของคำขอ
-//     try {
-//         const result = await db.query('DELETE FROM device_item WHERE item_id = $1 RETURNING *', [id]);       
-//         res.status(200).json({ message: 'Device deleted successfully' });
-//     } catch (error) {
-//         console.error('ERROR:', error);
-//         res.status(500).json({ message: 'Error deleting device' });
-//     }
-// });
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ดูคำร้องขอ
 app.get('/admin/loan_detail', authenticateToken, async (req,res) => {
     try {
@@ -424,49 +328,42 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
 });
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ***ฟังก์ชัน USER***
-// user ขอคำร้องขอยืม
+// ***ฟังก์ชัน การยืม***
+// user ขอคำร้องยืนยันการยืม
 app.post('/loan', authenticateToken, async (req, res) => {
     const { item_ids, loan_status, due_date } = req.body;
-    let itemAvailabilityStatus = 'ready';
+    let itemAvailabilityStatus = 'ready'; // ready = 1
 
-    // เปลี่ยน itemAvailabilityStatus เป็น 'pending' ถ้า loan_status เป็น 'pending'
     if (loan_status == 'pending') {
-        itemAvailabilityStatus = 'pending';
+        itemAvailabilityStatus = 'pending'; // pending = 2
     }
 
     try {
-        const token = req.cookies.token;
-        const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
-        const user_id = decodedToken.user_id;
-        console.log(decodedToken)
-        // เริ่มต้น transaction
+        // ดึง user_id จาก req.user หลังจากการตรวจสอบ token
+        const user_id = req.user.id;
+        console.log('User ID:', user_id);
+
         await db.tx(async t => {
-            // ตรวจสอบ item_ids และสร้าง loan_detail
             for (const item_id of item_ids) {
-                // ตรวจสอบสถานะของ item_id ก่อนดำเนินการ
                 const itemStatusResult = await t.oneOrNone(
                     'SELECT item_availability FROM device_item WHERE item_id = $1',
                     [item_id]
-                );           
-                if (itemStatusResult && (itemStatusResult.item_availability === 'pending' || itemStatusResult.item_availability === 'borrowed')) {
-                    // ส่งการตอบกลับเมื่อพบ item ที่ไม่สามารถยืมได้
+                );
+
+                if (itemStatusResult && (itemStatusResult.item_availability == 'pending' || itemStatusResult.item_availability == 'borrowed')) {
                     return t.none('ROLLBACK')
                         .then(() => res.status(400).json({ message: `Item with id ${item_id} cannot be borrowed` }));
                 }
 
-                // ดึง loan_id สูงสุดและเพิ่มค่า
                 const result = await t.one('SELECT COALESCE(MAX(loan_id), 0) AS max_id FROM loan_detail');
                 const nextId = result.max_id + 1;
 
-                // อัปเดต loan_detail table
                 await t.none(
                     'INSERT INTO loan_detail(loan_id, user_id, item_id, loan_status, due_date, item_availability_status) VALUES($1, $2, $3, $4, $5, $6)',
                     [nextId, user_id, item_id, loan_status, due_date, itemAvailabilityStatus]
                 );
 
-                // อัปเดต item_availability_status ใน device_item ถ้า loan_status เป็น 'pending'
-                if (loan_status == 'pending') {
+                if (loan_status == 2) {
                     await t.none(
                         'UPDATE device_item SET item_availability = $1 WHERE item_id = $2',
                         [itemAvailabilityStatus, item_id]
@@ -484,6 +381,9 @@ app.post('/loan', authenticateToken, async (req, res) => {
     }
 });
 
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ***ฟังก์ชันการคืน***
 // user ยืนยันคืน
 app.post('/return', authenticateToken, async (req, res) => {
     const { user_id, item_ids, return_status, location } = req.body;

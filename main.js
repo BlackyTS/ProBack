@@ -261,6 +261,13 @@ app.delete('/devices/delete', authenticateToken, async (req, res) => {
         return res.status(400).json({ message: 'ID is required' });
     }
     try {
+        const user_id = req.user.id;
+        console.log('User ID:', user_id);
+        const user_role = req.user.role; // สมมติว่าบทบาทอยู่ใน req.user
+        // ตรวจสอบว่าผู้ใช้มีบทบาทเป็น admin หรือไม่
+        if (user_role !== 2) {
+            return res.status(403).json({ message: 'Forbidden: Only admins can delete devices' });
+        }
         const deviceExists = await db.oneOrNone('SELECT 1 FROM device WHERE device_id = $1', [id]);
         if (!deviceExists) {
             // ตรวจสอบว่ามี device ที่ต้องการลบอยู่ในฐานข้อมูลหรือไม่
@@ -351,7 +358,7 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
 // ***ฟังก์ชัน การยืม***
 // user ขอคำร้องยืนยันการยืม
 app.post('/loan', authenticateToken, async (req, res) => {
-    const { device_ids, quantities, due_date } = req.body;
+    const { device_ids, quantities } = req.body;
     let itemAvailabilityStatus = 'ready'; // ready = 1
     const loan_status = 'pending';
     if (loan_status == 'pending') {
@@ -366,6 +373,11 @@ app.post('/loan', authenticateToken, async (req, res) => {
         // ดึง user_id จาก req.user หลังจากการตรวจสอบ token
         const user_id = req.user.id;
         console.log('User ID:', user_id);
+
+        // กำหนดวันที่ครบกำหนดเป็น 7 วันหลังจากวันที่ยืม
+        const loan_date = new Date();
+        const due_date = new Date(loan_date);
+        due_date.setDate(loan_date.getDate() + 7);
 
         // เริ่มต้น transaction
         await db.tx(async t => {
@@ -512,7 +524,7 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
                 // อัปเดตข้อมูลในตาราง transaction
                 await t.none(
                     `UPDATE transaction 
-                     SET return_id = $1, return_date = CURRENT_DATE, comment = $2, device_photo = $3 
+                     SET return_id = $1, return_date = CURRENT_TIMESTAMP, comment = $2, device_photo = $3 
                      WHERE loan_id = $4 AND user_id = $5`,
                     [nextId, comment, devicePhotoPath, loanDetail.loan_id, user_id]
                 );

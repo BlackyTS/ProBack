@@ -4,10 +4,12 @@ const app = express()
 const bcrypt = require('bcrypt')
 const bodyParser = require('body-parser')
 const cookieParser = require('cookie-parser')
-const jwt = require('jsonwebtoken');
+const jwt = require('jsonwebtoken')
 const cors = require('cors')
+const multer = require('multer')
+const path = require('path')
 
-require('dotenv').config();
+require('dotenv').config()
 
 const corsOptions = {
     origin: 'http://localhost:3000',
@@ -34,6 +36,18 @@ const connectionOptions = {
 
 const db = pgp(connectionOptions);
 app.use(cookieParser());
+
+// ตั้งค่า multer สำหรับการอัปโหลดรูปภาพ
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, 'uploads'); // ที่เก็บไฟล์รูปถ่าย
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + path.extname(file.originalname);
+        cb(null, uniqueSuffix); // ตั้งชื่อไฟล์โดยใช้เวลาปัจจุบัน
+    }
+});
+const upload = multer({ storage: storage });
 
 //JWT function
 const generateToken = (user) => {
@@ -139,21 +153,21 @@ app.delete('/delete', authenticateToken, async (req, res) => {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // การเพิ่มชุดอุปกรณ์ใหม่
 app.post('/devices/add', authenticateToken, async (req, res) => {
-    const { name, description, limit } = req.body;
+    const { name, description, limit, serial } = req.body;
     try {
         // เพิ่มอุปกรณ์เข้าในตาราง device โดยไม่ต้องระบุ device_id
         const result = await db.one(
-            'INSERT INTO device(device_name, device_description, device_limit, device_availability) VALUES($1, $2, $3, $4) RETURNING device_id',
-            [name, description, limit, limit]
-        );
+            'INSERT INTO device(device_name, device_description, device_limit, device_serial ,device_availability) VALUES($1, $2, $3, $4, $5) RETURNING device_id',
+            [name, description, limit, serial, limit]
+        );        
 
         const deviceId = result.device_id;
 
         // เพิ่มรายการอุปกรณ์ใน device_items
         for (let i = 1; i <= limit; i++) {
             await db.none(
-                'INSERT INTO device_item(item_name, item_description, device_id, item_availability) VALUES($1, $2, $3, $4)',
-                [`${name} ${i}`, description, deviceId, 'ready']
+                'INSERT INTO device_item(item_name, item_description, device_id, item_availability, item_serial) VALUES($1, $2, $3, $4, $5)',
+                [name, description, deviceId, 'ready' ,`${serial}/${i}`]
             );
         }
         
@@ -199,30 +213,36 @@ app.put('/device/update', authenticateToken, async (req, res) => {
 
     try {
         // ดึงข้อมูลปัจจุบันของอุปกรณ์จากฐานข้อมูล
-        const device = await db.one('SELECT device_limit, device_availability FROM device WHERE device_id = $1', [id]);
+        const device = await db.one('SELECT device_limit, device_availability, device_serial FROM device WHERE device_id = $1', [id]);
 
         // คำนวณความแตกต่างของ limit
         const limitDifference = limit - device.device_limit;
 
-        // อัพเดตค่า limit, availability และ approve ในตาราง device
+        // อัพเดตค่า limit, availability, approve, และ description ในตาราง device
         await db.none(
-            'UPDATE device SET device_name = $1, device_limit = $2, device_availability = device_availability + $3, device_approve = $4 WHERE device_id = $5',
-            [name, limit, limitDifference, approve, id]
+            'UPDATE device SET device_name = $1, device_limit = $2, device_availability = device_availability + $3, device_approve = $4, device_description = $5 WHERE device_id = $6',
+            [name, limit, limitDifference, approve, description, id]
         );
 
         // ถ้าจำนวน limit เพิ่มขึ้น, เพิ่มรายการใหม่ใน device_items
         if (limitDifference > 0) {
             for (let i = device.device_limit + 1; i <= limit; i++) {
                 await db.none(
-                    'INSERT INTO device_item (item_name, item_description, item_availability, device_id) VALUES($1, $2, $3, $4)',
-                    [`${name} ${i}`, description, 'ready', id]
+                    'INSERT INTO device_item (item_name, item_description, item_availability, device_id, item_serial) VALUES($1, $2, $3, $4, $5)',
+                    [name, description, 'ready', id, `${device.device_serial}/${i}`]
                 );
             }
         } 
         // ถ้าจำนวน limit ลดลง, ลบรายการใน device_items
         else if (limitDifference < 0) {
-            for (let i = device.device_limit; i > limit; i--) {
-                await db.none('DELETE FROM device_item WHERE device_id = $1 AND item_name = $2', [id, `Item ${i}`]);
+            // หาลิสต์ item_ids ที่จะถูกลบ
+            const itemsToDelete = await db.any(
+                'SELECT item_id FROM device_item WHERE device_id = $1 AND item_id > $2 ORDER BY item_id DESC LIMIT $3',
+                [id, limit, -limitDifference]
+            );
+
+            for (const item of itemsToDelete) {
+                await db.none('DELETE FROM device_item WHERE item_id = $1', [item.item_id]);
             }
         }
 
@@ -331,61 +351,92 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
 // ***ฟังก์ชัน การยืม***
 // user ขอคำร้องยืนยันการยืม
 app.post('/loan', authenticateToken, async (req, res) => {
-    const { device_id, quantity, due_date } = req.body;
+    const { device_ids, quantities, due_date } = req.body;
     let itemAvailabilityStatus = 'ready'; // ready = 1
     const loan_status = 'pending';
     if (loan_status == 'pending') {
         itemAvailabilityStatus = 'pending'; // pending = 2
     }
     try {
-        // ตรวจสอบว่ามี device_id และ quantity ที่ถูกต้อง
-        if (!device_id || !quantity || quantity <= 0) {
-            return res.status(400).json({ message: 'Invalid selection. Please provide a valid device_id and quantity.' });
+        // ตรวจสอบว่า device_ids และ quantities ถูกต้อง
+        if (!Array.isArray(device_ids) || !Array.isArray(quantities) || device_ids.length !== quantities.length) {
+            return res.status(400).json({ message: 'Invalid input. device_ids and quantities must be arrays of the same length.' });
         }
+        
         // ดึง user_id จาก req.user หลังจากการตรวจสอบ token
         const user_id = req.user.id;
         console.log('User ID:', user_id);
+
         // เริ่มต้น transaction
         await db.tx(async t => {
-            // ค้นหา item_id ที่พร้อมใช้งาน (ready) สำหรับ device_id ที่ระบุ
-            const availableItems = await t.any(
-                'SELECT item_id FROM device_item WHERE device_id = $1 AND item_availability = $2 ORDER BY item_id ASC',
-                [device_id, 'ready']
-            );
-            // ตรวจสอบว่ามีจำนวน item_id เพียงพอหรือไม่
-            if (availableItems.length < quantity) {
-                return res.status(400).json({
-                    message: `Not enough items available. Only ${availableItems.length} items are ready for borrowing.`
-                });
-            }
-            // เลือก item_id ตามจำนวนที่ต้องการยืม
-            const selectedItems = availableItems.slice(0, quantity);
-            // อัปเดตสถานะของ item_ids ที่ต้องการยืม
-            for (const item of selectedItems) {
-                const item_id = item.item_id;
-                const result = await t.one('SELECT COALESCE(MAX(loan_id), 0) AS max_id FROM loan_detail');
-                const nextId = result.max_id + 1;
+            let totalItemQuantity = 0;
+            let transaction_loan_id;
 
-                await t.none(
-                    'INSERT INTO loan_detail(loan_id, user_id, item_id, loan_status, due_date, item_availability_status) VALUES($1, $2, $3, $4, $5, $6)',
-                    [nextId, user_id, item_id, loan_status, due_date, itemAvailabilityStatus]
-                );
-                // อัปเดตสถานะ item_availability ใน device_item ถ้า loan_status เป็น pending
-                if (loan_status == 'pending') {
-                    await t.none(
-                        'UPDATE device_item SET item_availability = $1 WHERE item_id = $2',
-                        [itemAvailabilityStatus, item_id]
-                    );
+            for (let i = 0; i < device_ids.length; i++) {
+                const device_id = device_ids[i];
+                const quantity = quantities[i];
+                totalItemQuantity += quantity;
+
+                // ตรวจสอบว่า quantity ถูกต้อง
+                if (quantity <= 0) {
+                    return res.status(400).json({ message: `Invalid quantity for device_id ${device_id}.` });
                 }
+
+                // ค้นหา item_id ที่พร้อมใช้งาน (ready) สำหรับ device_id ที่ระบุ
+                const availableItems = await t.any(
+                    'SELECT item_id FROM device_item WHERE device_id = $1 AND item_availability = $2 ORDER BY item_id ASC',
+                    [device_id, 'ready']
+                );
+
+                // ตรวจสอบว่ามีจำนวน item_id เพียงพอหรือไม่
+                if (availableItems.length < quantity) {
+                    return res.status(400).json({
+                        message: `Not enough items available for device_id ${device_id}. Only ${availableItems.length} items are ready for borrowing.`
+                    });
+                }
+
+                // เลือก item_id ตามจำนวนที่ต้องการยืม
+                const selectedItems = availableItems.slice(0, quantity);
+
+                // อัปเดตสถานะของ item_ids ที่ต้องการยืม
+                for (const item of selectedItems) {
+                    const item_id = item.item_id;
+                    const result = await t.one('SELECT COALESCE(MAX(loan_id), 0) + 1 AS next_id FROM loan_detail');
+                    const loan_id = result.next_id;
+
+                    if (!transaction_loan_id) {
+                        transaction_loan_id = loan_id;
+                    }
+
+                    await t.none(
+                        'INSERT INTO loan_detail(loan_id, user_id, device_id, item_id, loan_status, due_date, item_availability_status) VALUES($1, $2, $3, $4, $5, $6, $7)',
+                        [loan_id, user_id, device_id, item_id, loan_status, due_date, itemAvailabilityStatus]
+                    );
+
+                    // อัปเดตสถานะ item_availability ใน device_item ถ้า loan_status เป็น pending
+                    if (loan_status == 'pending') {
+                        await t.none(
+                            'UPDATE device_item SET item_availability = $1 WHERE item_id = $2',
+                            [itemAvailabilityStatus, item_id]
+                        );
+                    }
+                }
+
+                // อัปเดตค่า device_availability ในตาราง device โดยนับจำนวน item_availability ที่มีสถานะ ready
+                const updatedAvailability = await t.one(
+                    'SELECT COUNT(*) AS ready_count FROM device_item WHERE device_id = $1 AND item_availability = $2',
+                    [device_id, 'ready']
+                );
+                await t.none(
+                    'UPDATE device SET device_availability = $1 WHERE device_id = $2',
+                    [updatedAvailability.ready_count, device_id]
+                );
             }
-            // อัปเดตค่า device_availability ในตาราง device โดยนับจำนวน item_availability ที่มีสถานะ ready
-            const updatedAvailability = await t.one(
-                'SELECT COUNT(*) AS ready_count FROM device_item WHERE device_id = $1 AND item_availability = $2',
-                [device_id, 'ready']
-            );
+
+            // บันทึกข้อมูลลงในตาราง transaction
             await t.none(
-                'UPDATE device SET device_availability = $1 WHERE device_id = $2',
-                [updatedAvailability.ready_count, device_id]
+                'INSERT INTO transaction(user_id, loan_id, loan_date, due_date, item_quantity) VALUES($1, $2, CURRENT_TIMESTAMP, $3, $4)',
+                [user_id, transaction_loan_id, due_date, totalItemQuantity]
             );
 
             res.status(200).json({ message: 'Loan request processed successfully' });
@@ -401,14 +452,18 @@ app.post('/loan', authenticateToken, async (req, res) => {
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ***ฟังก์ชันการคืน***
 // user ยืนยันคืน
-app.post('/return', authenticateToken, async (req, res) => {
-    const { return_status, location, comment} = req.body;
+app.post('/return', authenticateToken, upload.single('device_photo'), async (req, res) => {
+    const { return_status, location, comment } = req.body;
 
     try {
-        // ดึง user_id จาก token หลังจากการตรวจสอบ token
         const user_id = req.user.id;
 
-        // ดึงรายการ item_id ที่ user_id นี้ยืมไปและยังไม่ได้คืน
+        if (!req.file) {
+            return res.status(400).json({ message: 'Device photo is required' });
+        }
+
+        const devicePhotoPath = req.file.path;
+
         const borrowedItems = await db.any(
             'SELECT item_id FROM loan_detail WHERE user_id = $1 AND return_date IS NULL',
             [user_id]
@@ -418,12 +473,10 @@ app.post('/return', authenticateToken, async (req, res) => {
             return res.status(400).json({ message: 'No borrowed items found for this user' });
         }
 
-        // เริ่มต้น transaction
         await db.tx(async t => {
             for (const item of borrowedItems) {
                 const item_id = item.item_id;
 
-                // ดึง loan_id ล่าสุดที่ยังไม่ได้คืนจาก loan_detail
                 const loanDetail = await t.oneOrNone(
                     'SELECT loan_id FROM loan_detail WHERE item_id = $1 AND return_date IS NULL',
                     [item_id]
@@ -433,64 +486,62 @@ app.post('/return', authenticateToken, async (req, res) => {
                     return res.status(400).json({ message: `No active loan found for item with id ${item_id}` });
                 }
 
-                // อัปเดต return_detail table
                 const result = await t.one('SELECT COALESCE(MAX(return_id), 0) AS max_id FROM return_detail');
                 const nextId = result.max_id + 1;
 
                 await t.none(
-                    'INSERT INTO return_detail(return_id, user_id, item_id, return_status, location_to_return, return_comment) VALUES($1, $2, $3, $4, $5, $6)',
-                    [nextId, user_id, item_id, return_status, location, comment]
+                    'INSERT INTO return_detail(return_id, user_id, item_id, return_status, location_to_return, return_comment, device_photo) VALUES($1, $2, $3, $4, $5, $6, $7)',
+                    [nextId, user_id, item_id, return_status, location, comment, devicePhotoPath]
                 );
 
-                // อัปเดต loan_detail table ให้ return_date เป็นวันที่ปัจจุบัน
                 await t.none(
                     'UPDATE loan_detail SET return_date = CURRENT_DATE WHERE loan_id = $1',
                     [loanDetail.loan_id]
                 );
 
-                // อัปเดต item_availability_status ใน device_item ให้กลับไปเป็น 'ready'
                 await t.none(
                     'UPDATE device_item SET item_availability = $1, item_loaning = false WHERE item_id = $2',
                     ['ready', item_id]
                 );
 
-                // อัปเดต loan_status, item_availability_status ใน loan_detail ให้เป็น complete
                 await t.none(
                     'UPDATE loan_detail SET loan_status = $1, item_availability_status = $2 WHERE item_id = $3',
                     ['complete', 'complete', item_id]
                 );
+
+                // อัปเดตข้อมูลในตาราง transaction
+                await t.none(
+                    `UPDATE transaction 
+                     SET return_id = $1, return_date = CURRENT_DATE, comment = $2, device_photo = $3 
+                     WHERE loan_id = $4 AND user_id = $5`,
+                    [nextId, comment, devicePhotoPath, loanDetail.loan_id, user_id]
+                );
             }
 
-            // อัปเดตจำนวนอุปกรณ์ใน device table
             await t.none(
                 `UPDATE device 
                  SET device_availability = (
-                     SELECT COUNT(*) 
-                     FROM device_item 
-                     WHERE device_id = device.device_id 
-                     AND item_availability = 'ready'
+                    SELECT COUNT(*) 
+                    FROM device_item 
+                    WHERE device_id = device.device_id 
+                    AND item_availability = 'ready'
                  ) 
                  WHERE device_id IN (
-                     SELECT DISTINCT device_id 
-                     FROM device_item 
-                     WHERE item_id IN (${borrowedItems.map(item => item.item_id).join(',')})
+                    SELECT DISTINCT device_id 
+                    FROM device_item 
+                    WHERE item_id IN (${borrowedItems.map(item => item.item_id).join(',')})
                  )`
             );
 
-            // ส่งการตอบกลับเมื่อดำเนินการสำเร็จ
             res.status(200).json({ message: 'Return processed successfully' });
         });
-
     } catch (error) {
         console.error('ERROR:', error);
         if (!res.headersSent) {
-            // ส่งการตอบกลับเมื่อเกิดข้อผิดพลาด
             res.status(500).json({ message: 'Error to return devices' });
         }
     }
 });
-
-
 
 
 

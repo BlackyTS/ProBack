@@ -63,3 +63,101 @@ app.put('/device/update', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Error updating device' });
     }
 });
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// เช็คอุปกรณ์ทุกตัว
+// app.get('/device/each-item', authenticateToken, async (req, res) => {
+//     try {
+//         // ดึงข้อมูลอุปกรณ์ทั้งหมด
+//         const items = await db.any('SELECT * FROM each_device');
+
+//         // ตรวจสอบว่ามีอุปกรณ์ในฐานข้อมูลหรือไม่
+//         if (items.length == 0) {
+//             return res.status(404).json({ message: 'No device to view' });
+//         }
+
+//         // นับจำนวน item_availability ที่เป็นแต่ละสถานะ
+//         const availabilityCounts = await db.one(`
+//             SELECT 
+//                 COUNT(*) FILTER (WHERE item_availability = 'ready') AS ready_count,
+//                 COUNT(*) FILTER (WHERE item_availability = 'waiting for approve') AS waiting_for_approve_count,
+//                 COUNT(*) FILTER (WHERE item_availability = 'borrowed') AS borrowed_count,
+//                 COUNT(*) FILTER (WHERE item_availability = 'broken') AS broken_count
+//             FROM each_device
+//         `);
+
+//         // ส่งค่าตอบกลับ
+//         res.status(200).json({
+//             items,
+//             ready_count: availabilityCounts.ready_count,
+//             waiting_for_approve_count: availabilityCounts.waiting_for_approve_count,
+//             borrowed_count: availabilityCounts.borrowed_count,
+//             broken_count: availabilityCounts.broken_count
+//         });
+//     } catch (error) {
+//         console.error('ERROR:', error);
+//         res.status(500).json({ message: 'Error fetching each devices' });
+//     }
+// });
+
+
+// // เช็คอุปกรณ์แต่ละตัว
+// app.get('/device/each-item/:id', authenticateToken, async (req, res) => {
+//     const { id } = req.params;
+//     try {
+//         const item = await db.query('SELECT * FROM each_device WHERE item_id = $1', [id]);
+//         // ตรวจสอบว่ามีผลลัพธ์หรือไม่
+//         if (!item || item == 0) {
+//             return res.status(404).json({ massge: 'Device not found' });
+//         }
+
+//         // ส่งข้อมูลอุปกรณ์กลับไปยังผู้ใช้
+//         res.status(200).json(item[0]); // หรือใช้ device ถ้ามันไม่ใช่อาร์เรย์
+//     } catch (error) {
+//         console.error('ERROR:', error);
+//         res.status(500).json({ message: 'Error fetching device' });
+//     }
+// });
+
+// เช็คอุปกรณ์แต่ละตัว
+// app.get('/device/each-item/:id', authenticateToken, async (req, res) => {
+//     const { id } = req.params;
+//     try {
+//         const item = await db.query('SELECT * FROM device_item WHERE item_id = $1', [id]);
+//         // ตรวจสอบว่ามีผลลัพธ์หรือไม่
+//         if (!item || item == 0) {
+//             return res.status(404).json({ massge: 'Device not found' });
+//         }
+//         res.status(200).json(item[0]); 
+//     } catch (error) {
+//         console.error('ERROR:', error);
+//         res.status(500).json({ message: 'Error fetching device' });
+//     }
+// });
+
+// // อัพเดทอุปกรณ์
+// app.put('/device/each-item/update', authenticateToken, async (req, res) => {
+//     const { id, name, type, description, availability } = req.body;  
+//     try {
+//         const result = await db.result('UPDATE device_item SET item_name = $1, item_type = $2, item_description = $3 , item_availability = $4 WHERE item_id = $5',[name, type, description, availability, id]);
+//         if (!result) {
+//             return res.status(404).json({ message: 'No device to update' });
+//         }
+//         res.status(200).json({ message: 'Items updated successfully.' });
+//     } catch (error) {
+//         console.error('ERROR:', error);
+//         res.status(500).json({ message: 'Error updating items.' });
+//     }
+// });
+
+// // ลบอุปกรณ์
+// app.delete('/device/each-item/delete', authenticateToken, async (req, res) => {
+//     const { id } = req.body; // รับค่า id จาก body ของคำขอ
+//     try {
+//         const result = await db.query('DELETE FROM device_item WHERE item_id = $1 RETURNING *', [id]);       
+//         res.status(200).json({ message: 'Device deleted successfully' });
+//     } catch (error) {
+//         console.error('ERROR:', error);
+//         res.status(500).json({ message: 'Error deleting device' });
+//     }
+// });

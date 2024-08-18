@@ -161,3 +161,107 @@ app.put('/device/update', authenticateToken, async (req, res) => {
 //         res.status(500).json({ message: 'Error deleting device' });
 //     }
 // });
+
+app.post('/loan', authenticateToken, async (req, res) => {
+    const { device_ids, quantities } = req.body;
+    let itemAvailabilityStatus = 'ready'; // ready = 1
+    const loan_status = 'pending';
+    if (loan_status == 'pending') {
+        itemAvailabilityStatus = 'pending'; // pending = 2
+    }
+    try {
+        // ตรวจสอบว่า device_ids และ quantities ถูกต้อง
+        if (!Array.isArray(device_ids) || !Array.isArray(quantities) || device_ids.length !== quantities.length) {
+            return res.status(400).json({ message: 'Invalid input. device_ids and quantities must be arrays of the same length.' });
+        }
+        
+        // ดึง user_id จาก req.user หลังจากการตรวจสอบ token
+        const user_id = req.user.id;
+        console.log('User ID:', user_id);
+
+        // กำหนดวันที่ครบกำหนดเป็น 7 วันหลังจากวันที่ยืม
+        const loan_date = new Date();
+        const due_date = new Date(loan_date);
+        due_date.setDate(loan_date.getDate() + 7);
+
+        // เริ่มต้น transaction
+        await db.tx(async t => {
+            let totalItemQuantity = 0;
+            let transaction_loan_id;
+
+            for (let i = 0; i < device_ids.length; i++) {
+                const device_id = device_ids[i];
+                const quantity = quantities[i];
+                totalItemQuantity += quantity;
+
+                // ตรวจสอบว่า quantity ถูกต้อง
+                if (quantity <= 0) {
+                    return res.status(400).json({ message: `Invalid quantity for device_id ${device_id}.` });
+                }
+
+                // ค้นหา item_id ที่พร้อมใช้งาน (ready) สำหรับ device_id ที่ระบุ
+                const availableItems = await t.any(
+                    'SELECT item_id FROM device_item WHERE device_id = $1 AND item_availability = $2 ORDER BY item_id ASC',
+                    [device_id, 'ready']
+                );
+
+                // ตรวจสอบว่ามีจำนวน item_id เพียงพอหรือไม่
+                if (availableItems.length < quantity) {
+                    return res.status(400).json({
+                        message: `Not enough items available for device_id ${device_id}. Only ${availableItems.length} items are ready for borrowing.`
+                    });
+                }
+
+                // เลือก item_id ตามจำนวนที่ต้องการยืม
+                const selectedItems = availableItems.slice(0, quantity);
+
+                // อัปเดตสถานะของ item_ids ที่ต้องการยืม
+                for (const item of selectedItems) {
+                    const item_id = item.item_id;
+                    const result = await t.one('SELECT COALESCE(MAX(loan_id), 0) + 1 AS next_id FROM loan_detail');
+                    const loan_id = result.next_id;
+
+                    if (!transaction_loan_id) {
+                        transaction_loan_id = loan_id;
+                    }
+
+                    await t.none(
+                        'INSERT INTO loan_detail(loan_id, user_id, device_id, item_id, loan_status, due_date, item_availability_status) VALUES($1, $2, $3, $4, $5, $6, $7)',
+                        [loan_id, user_id, device_id, item_id, loan_status, due_date, itemAvailabilityStatus]
+                    );
+
+                    // อัปเดตสถานะ item_availability ใน device_item ถ้า loan_status เป็น pending
+                    if (loan_status == 'pending') {
+                        await t.none(
+                            'UPDATE device_item SET item_availability = $1 WHERE item_id = $2',
+                            [itemAvailabilityStatus, item_id]
+                        );
+                    }
+                }
+
+                // อัปเดตค่า device_availability ในตาราง device โดยนับจำนวน item_availability ที่มีสถานะ ready
+                const updatedAvailability = await t.one(
+                    'SELECT COUNT(*) AS ready_count FROM device_item WHERE device_id = $1 AND item_availability = $2',
+                    [device_id, 'ready']
+                );
+                await t.none(
+                    'UPDATE device SET device_availability = $1 WHERE device_id = $2',
+                    [updatedAvailability.ready_count, device_id]
+                );
+            }
+
+            // บันทึกข้อมูลลงในตาราง transaction
+            await t.none(
+                'INSERT INTO transaction(user_id, loan_id, loan_date, due_date, item_quantity) VALUES($1, $2, CURRENT_TIMESTAMP, $3, $4)',
+                [user_id, transaction_loan_id, due_date, totalItemQuantity]
+            );
+
+            res.status(200).json({ message: 'Loan request processed successfully' });
+        });
+    } catch (error) {
+        console.error('ERROR:', error);
+        if (!res.headersSent) {
+            res.status(500).json({ message: 'Error processing loan request' });
+        }
+    }
+});

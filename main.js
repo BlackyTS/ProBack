@@ -286,12 +286,13 @@ app.delete('/devices/delete', authenticateToken, async (req, res) => {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ดูคำร้องขอของแต่ละ user
-app.get('/admin/loan_detail/:user_id', authenticateToken, async (req, res) => {
+app.get('/admin/loan_detail/:user_id/:transaction_id', authenticateToken, async (req, res) => {
     try {
         const user_id = parseInt(req.params.user_id, 10); // รับ user_id จากพารามิเตอร์ใน URL
+        const transaction_id = parseInt(req.params.transaction_id, 10); // รับ transaction_id จากพารามิเตอร์ใน URL
 
-        if (isNaN(user_id)) {
-            return res.status(400).json({ message: 'Invalid user ID' });
+        if (isNaN(user_id) || isNaN(transaction_id)) {
+            return res.status(400).json({ message: 'Invalid user ID or transaction ID' });
         }
 
         const requests = await db.any(`
@@ -300,20 +301,21 @@ app.get('/admin/loan_detail/:user_id', authenticateToken, async (req, res) => {
             FROM loan_detail r
             JOIN users u ON r.user_id = u.user_id
             JOIN device_item e ON r.item_id = e.item_id
-            WHERE r.user_id = $1
+            WHERE r.user_id = $1 AND r.transaction_id = $2
             ORDER BY r.loan_date DESC;
-        `, [user_id]);
+        `, [user_id, transaction_id]);
 
         if (requests.length == 0) {
-            return res.status(404).json({ user_id, requests: [], message: 'No requests found' });
+            return res.status(404).json({ user_id, transaction_id, requests: [], message: 'No requests found' });
         }
 
-        res.status(200).json({ user_id, requests });
+        res.status(200).json({ user_id, transaction_id, requests });
     } catch (error) {
         console.error('ERROR:', error);
         res.status(500).json({ message: 'Error fetching requests' });
     }
 });
+
 // ดู user ที่ขอคำร้องมา
 app.get('/admin/loan_detail', authenticateToken, async (req, res) => {
     try {

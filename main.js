@@ -285,7 +285,7 @@ app.delete('/devices/delete', authenticateToken, async (req, res) => {
 });
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ดูคำร้องขอ
+// ดูคำร้องขอของแต่ละ user
 app.get('/admin/loan_detail/:user_id', authenticateToken, async (req, res) => {
     try {
         const user_id = parseInt(req.params.user_id, 10); // รับ user_id จากพารามิเตอร์ใน URL
@@ -304,7 +304,7 @@ app.get('/admin/loan_detail/:user_id', authenticateToken, async (req, res) => {
             ORDER BY r.loan_date DESC;
         `, [user_id]);
 
-        if (requests.length === 0) {
+        if (requests.length == 0) {
             return res.status(404).json({ user_id, requests: [], message: 'No requests found' });
         }
 
@@ -314,6 +314,42 @@ app.get('/admin/loan_detail/:user_id', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Error fetching requests' });
     }
 });
+// ดู user ที่ขอคำร้องมา
+app.get('/admin/loan_detail', authenticateToken, async (req, res) => {
+    try {
+        const requests = await db.any(`
+            SELECT t.user_id, u.user_email, t.loan_date, t.due_date, t.item_quantity
+            FROM transaction t
+            JOIN users u ON t.user_id = u.user_id
+            ORDER BY t.loan_date DESC;
+        `);
+
+        if (requests.length === 0) {
+            return res.status(404).json({ message: 'No transactions found' });
+        }
+
+        // Group the results by user_id
+        const groupedRequests = requests.reduce((acc, curr) => {
+            acc.push({
+                user_id: curr.user_id,
+                user_email: curr.user_email,
+                loan_date: curr.loan_date,
+                due_date: curr.due_date,
+                item_quantity: curr.item_quantity
+            });
+            return acc;
+        }, []);
+
+        res.status(200).json(groupedRequests);
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error fetching transactions' });
+    }
+});
+
+
+
+
 
 
 
@@ -534,9 +570,10 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
 
                 // อัปเดตข้อมูลใน transaction
                 await t.none(
-                    'UPDATE transaction SET return_date = CURRENT_DATE, return_comment = $1, device_photo = $2 WHERE user_id = $3 AND item_id = $4',
-                    [comment, req.file ? req.file.path : null, user_id, item_id]
+                    'UPDATE transaction(return_date = CURRENT_DATE, comment = $1, device_photo = $2) VALUES($1, $2)',
+                    [comment, req.file ? req.file.path : null]
                 );
+                
             }
 
             // อัปเดตจำนวนของ device ที่พร้อมใช้งานใน device table

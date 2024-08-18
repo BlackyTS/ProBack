@@ -286,24 +286,36 @@ app.delete('/devices/delete', authenticateToken, async (req, res) => {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ดูคำร้องขอ
-app.get('/admin/loan_detail', authenticateToken, async (req,res) => {
+app.get('/admin/loan_detail/:user_id', authenticateToken, async (req, res) => {
     try {
+        const user_id = parseInt(req.params.user_id, 10); // รับ user_id จากพารามิเตอร์ใน URL
+
+        if (isNaN(user_id)) {
+            return res.status(400).json({ message: 'Invalid user ID' });
+        }
+
         const requests = await db.any(`
-            SELECT r.loan_id, u.user_email, e.item_name, r.loan_status, r.loan_date, r.item_availability_status, r.admin_comment
+            SELECT r.loan_id, e.item_name, e.item_serial, u.user_id, u.user_email, 
+                   r.loan_date, r.due_date, r.loan_status
             FROM loan_detail r
             JOIN users u ON r.user_id = u.user_id
             JOIN device_item e ON r.item_id = e.item_id
+            WHERE r.user_id = $1
             ORDER BY r.loan_date DESC;
-        `);
-        if (requests.length == 0) {
-            return res.status(404).json({ message: 'No requests found' });
+        `, [user_id]);
+
+        if (requests.length === 0) {
+            return res.status(404).json({ user_id, requests: [], message: 'No requests found' });
         }
-        res.status(200).json(requests);
+
+        res.status(200).json({ user_id, requests });
     } catch (error) {
         console.error('ERROR:', error);
         res.status(500).json({ message: 'Error fetching requests' });
     }
 });
+
+
 
 // ยืนยันและแก้ไขคำร้องขอ
 app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {

@@ -759,14 +759,13 @@ app.post('/loan', authenticateToken, async (req, res) => {
 // ***ฟังก์ชันการคืน***
 // user ยืนยันคืน
 app.post('/return', authenticateToken, upload.single('device_photo'), async (req, res) => {
-    const { location, comment } = req.body;
     let items;
 
     try {
         const user_id = req.user.id;
         console.log(`User ID return: `, user_id);
         items = JSON.parse(req.body.items);
-        if (!items || !Array.isArray(items) || items.length == 0) {
+        if (!items || !Array.isArray(items) || items.length === 0) {
             if (req.file) {
                 fs.unlinkSync(req.file.path);
             }
@@ -801,8 +800,8 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
                 const nextId = result.max_id + 1;
                 // อัปเดตข้อมูลใน return_detail
                 await t.none(
-                    'INSERT INTO return_detail(return_id, user_id, item_id, return_status, location_to_return, return_comment, device_photo, return_date) VALUES($1, $2, $3, $4, $5, $6, $7, $8)',
-                    [nextId, user_id, item_id, return_status, location, comment, req.file ? req.file.path : null, returnDate]
+                    'INSERT INTO return_detail(return_id, user_id, item_id, return_status, device_photo, return_date) VALUES($1, $2, $3, $4, $5, $6)',
+                    [nextId, user_id, item_id, return_status, req.file ? req.file.path : null, returnDate]
                 );
                 // อัปเดตวันที่คืนใน loan_detail
                 await t.none(
@@ -815,12 +814,11 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
                     ['ready', item_id]
                 );
                 // อัปเดตข้อมูลใน transaction
-                // อัปเดตข้อมูลใน transaction
                 await t.none(
                     `UPDATE transaction 
-                    SET return_date = $1, comment = $2, device_photo = $3, loan_status = 'complete' 
-                    WHERE transaction_id = (SELECT transaction_id FROM loan_detail WHERE item_id = $4 AND user_id = $5 LIMIT 1)`,
-                    [returnDate, comment, req.file ? req.file.path : null, item_id, user_id]
+                    SET return_date = $1, device_photo = $2, loan_status = 'complete' 
+                    WHERE transaction_id = (SELECT transaction_id FROM loan_detail WHERE item_id = $3 AND user_id = $4 LIMIT 1)`,
+                    [returnDate, req.file ? req.file.path : null, item_id, user_id]
                 );
             }
             // อัปเดตจำนวนของ device ที่พร้อมใช้งานในตาราง device
@@ -851,6 +849,7 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
         }
     }
 });
+
 
 
 

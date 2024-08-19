@@ -380,13 +380,181 @@ app.get('/admin/loan_detail', authenticateToken, async (req, res) => {
             ORDER BY t.loan_date DESC;
         `);
 
-        if (requests.length === 0) {
+        if (requests.length == 0) {
             return res.status(404).json({ message: 'No transactions found' });
         }
 
         // Group the results by user_id and transaction_id
         const groupedRequests = requests.reduce((acc, curr) => {
-            const existingRequest = acc.find(req => req.user_id === curr.user_id && req.transaction_id === curr.transaction_id);
+            const existingRequest = acc.find(req => req.user_id == curr.user_id && req.transaction_id == curr.transaction_id);
+            if (existingRequest) {
+                existingRequest.loan_status = curr.loan_status;
+            } else {
+                acc.push({
+                    user_id: curr.user_id,
+                    transaction_id: curr.transaction_id,
+                    user_firstname: curr.user_firstname,
+                    user_email: curr.user_email,
+                    loan_date: curr.loan_date,
+                    due_date: curr.due_date,
+                    item_quantity: curr.item_quantity,
+                    loan_status: curr.loan_status
+                });
+            }
+            return acc;
+        }, []);
+
+        res.status(200).json(groupedRequests);
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error fetching transactions' });
+    }
+});
+// ดูคำร้องรอยืนยัน pending
+app.get('/admin/loan_detail/pending', authenticateToken, async (req, res) => {
+    try {
+        const requests = await db.any(`
+            SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, t.loan_date, t.due_date, t.item_quantity, ld.loan_status
+            FROM transaction t
+            JOIN users u ON t.user_id = u.user_id
+            LEFT JOIN loan_detail ld ON t.transaction_id = ld.transaction_id
+            WHERE ld.loan_status = 'pending'
+            ORDER BY t.loan_date DESC;
+        `);
+
+        if (requests.length == 0) {
+            return res.status(404).json({ message: 'No pending transactions found' });
+        }
+
+        // Group the results by user_id and transaction_id
+        const groupedRequests = requests.reduce((acc, curr) => {
+            const existingRequest = acc.find(req => req.user_id == curr.user_id && req.transaction_id == curr.transaction_id);
+            if (existingRequest) {
+                existingRequest.loan_status = curr.loan_status; // Update loan_status
+            } else {
+                acc.push({
+                    user_id: curr.user_id,
+                    transaction_id: curr.transaction_id,
+                    user_firstname: curr.user_firstname,
+                    user_email: curr.user_email,
+                    loan_date: curr.loan_date,
+                    due_date: curr.due_date,
+                    item_quantity: curr.item_quantity,
+                    loan_status: curr.loan_status
+                });
+            }
+            return acc;
+        }, []);
+
+        res.status(200).json(groupedRequests);
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error fetching transactions' });
+    }
+});
+// ดูคำร้องยืนยัน approve
+app.get('/admin/loan_detail/approve', authenticateToken, async (req, res) => {
+    try {
+        const requests = await db.any(`
+            SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, t.loan_date, t.due_date, t.item_quantity, ld.loan_status
+            FROM transaction t
+            JOIN users u ON t.user_id = u.user_id
+            LEFT JOIN loan_detail ld ON t.transaction_id = ld.transaction_id
+            WHERE ld.loan_status = 'approve'
+            ORDER BY t.loan_date DESC;
+        `);
+
+        if (requests.length == 0) {
+            return res.status(404).json({ message: 'No pending transactions found' });
+        }
+
+        // Group the results by user_id and transaction_id
+        const groupedRequests = requests.reduce((acc, curr) => {
+            const existingRequest = acc.find(req => req.user_id == curr.user_id && req.transaction_id == curr.transaction_id);
+            if (existingRequest) {
+                existingRequest.loan_status = curr.loan_status; // Update loan_status
+            } else {
+                acc.push({
+                    user_id: curr.user_id,
+                    transaction_id: curr.transaction_id,
+                    user_firstname: curr.user_firstname,
+                    user_email: curr.user_email,
+                    loan_date: curr.loan_date,
+                    due_date: curr.due_date,
+                    item_quantity: curr.item_quantity,
+                    loan_status: curr.loan_status
+                });
+            }
+            return acc;
+        }, []);
+
+        res.status(200).json(groupedRequests);
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error fetching transactions' });
+    }
+});
+// ดูคำร้องปฏิเสธ deny
+app.get('/admin/loan_detail/deny', authenticateToken, async (req, res) => {
+    try {
+        const requests = await db.any(`
+            SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, t.loan_date, t.due_date, t.item_quantity, ld.loan_status
+            FROM transaction t
+            JOIN users u ON t.user_id = u.user_id
+            LEFT JOIN loan_detail ld ON t.transaction_id = ld.transaction_id
+            WHERE ld.loan_status = 'deny'
+            ORDER BY t.loan_date DESC;
+        `);
+
+        if (requests.length == 0) {
+            return res.status(404).json({ message: 'No pending transactions found' });
+        }
+
+        // Group the results by user_id and transaction_id
+        const groupedRequests = requests.reduce((acc, curr) => {
+            const existingRequest = acc.find(req => req.user_id == curr.user_id && req.transaction_id == curr.transaction_id);
+            if (existingRequest) {
+                existingRequest.loan_status = curr.loan_status; // Update loan_status
+            } else {
+                acc.push({
+                    user_id: curr.user_id,
+                    transaction_id: curr.transaction_id,
+                    user_firstname: curr.user_firstname,
+                    user_email: curr.user_email,
+                    loan_date: curr.loan_date,
+                    due_date: curr.due_date,
+                    item_quantity: curr.item_quantity,
+                    loan_status: curr.loan_status
+                });
+            }
+            return acc;
+        }, []);
+
+        res.status(200).json(groupedRequests);
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error fetching transactions' });
+    }
+});
+// ดูคำร้องที่สำเร็จ complete
+app.get('/admin/loan_detail/deny', authenticateToken, async (req, res) => {
+    try {
+        const requests = await db.any(`
+            SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, t.loan_date, t.due_date, t.item_quantity, ld.loan_status
+            FROM transaction t
+            JOIN users u ON t.user_id = u.user_id
+            LEFT JOIN loan_detail ld ON t.transaction_id = ld.transaction_id
+            WHERE ld.loan_status = 'complete'
+            ORDER BY t.loan_date DESC;
+        `);
+
+        if (requests.length == 0) {
+            return res.status(404).json({ message: 'No pending transactions found' });
+        }
+
+        // Group the results by user_id and transaction_id
+        const groupedRequests = requests.reduce((acc, curr) => {
+            const existingRequest = acc.find(req => req.user_id == curr.user_id && req.transaction_id == curr.transaction_id);
             if (existingRequest) {
                 existingRequest.loan_status = curr.loan_status; // Update loan_status
             } else {
@@ -449,7 +617,6 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
             if (items.length == 0) {
                 return res.status(404).json({ message: `No loan details found for transaction_id ${transaction_id}` });
             }
-
             // อัพเดทข้อมูลใน loan_detail
             const result = await t.result(
                 'UPDATE loan_detail SET loan_status = $1, item_availability_status = $2, admin_comment = $3, location_to_loan = $4 WHERE transaction_id = $5',
@@ -459,6 +626,11 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
             if (result.rowCount == 0) {
                 return res.status(404).json({ message: `No loan details updated for transaction_id ${transaction_id}` });
             }
+            // อัพเดทค่า loan_status ในตาราง transaction
+            await t.none(
+                'UPDATE transaction SET loan_status = $1 WHERE transaction_id = $2',
+                [loan_status, transaction_id]
+            );
 
             // อัพเดทข้อมูลใน device_item ตามเงื่อนไข
             const itemIds = items.map(item => item.item_id);
@@ -481,6 +653,7 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Error updating requests' });
     }
 });
+
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ***ฟังก์ชัน การยืม***
@@ -510,10 +683,10 @@ app.post('/loan', authenticateToken, async (req, res) => {
             const maxTransaction = await t.one('SELECT COALESCE(MAX(transaction_id), 0) AS max_id FROM transaction');
             const nextTransactionId = maxTransaction.max_id + 1;
 
-            // บันทึกข้อมูลลงในตาราง transaction และใช้ transaction_id ถัดไป
+            // บันทึกข้อมูลลงในตาราง transaction และใช้ transaction_id ถัดไป พร้อมเพิ่ม loan_status
             await t.none(
-                'INSERT INTO transaction(transaction_id, user_id, loan_date, due_date, item_quantity) VALUES($1, $2, $3, $4, $5)',
-                [nextTransactionId, user_id, loan_date, due_date, totalItemQuantity]
+                'INSERT INTO transaction(transaction_id, user_id, loan_date, due_date, item_quantity, loan_status) VALUES($1, $2, $3, $4, $5, $6)',
+                [nextTransactionId, user_id, loan_date, due_date, totalItemQuantity, loan_status]
             );
 
             // รับค่า loan_id สูงสุดจากฐานข้อมูล
@@ -642,8 +815,11 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
                     ['ready', item_id]
                 );
                 // อัปเดตข้อมูลใน transaction
+                // อัปเดตข้อมูลใน transaction
                 await t.none(
-                    'UPDATE transaction SET return_date = $1, comment = $2, device_photo = $3 WHERE transaction_id = (SELECT transaction_id FROM loan_detail WHERE item_id = $4 AND user_id = $5 LIMIT 1)',
+                    `UPDATE transaction 
+                    SET return_date = $1, comment = $2, device_photo = $3, loan_status = 'complete' 
+                    WHERE transaction_id = (SELECT transaction_id FROM loan_detail WHERE item_id = $4 AND user_id = $5 LIMIT 1)`,
                     [returnDate, comment, req.file ? req.file.path : null, item_id, user_id]
                 );
             }

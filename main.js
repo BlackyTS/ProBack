@@ -8,7 +8,7 @@ const jwt = require('jsonwebtoken')
 const cors = require('cors')
 const multer = require('multer')
 const path = require('path')
-const { lutimes } = require('fs')
+const fs = require('fs');
 
 require('dotenv').config()
 
@@ -264,7 +264,7 @@ app.delete('/devices/delete', authenticateToken, async (req, res) => {
         console.log('User ID:', user_id);
         const user_role = req.user.role;
         // ตรวจสอบว่าผู้ใช้มีบทบาทเป็น admin หรือไม่
-        if (user_role !== 2) {
+        if (user_role != 2) {
             return res.status(403).json({ message: 'Forbidden: Only admins can delete devices' });
         }
         const deviceExists = await db.oneOrNone('SELECT 1 FROM device WHERE device_id = $1', [id]);
@@ -283,6 +283,59 @@ app.delete('/devices/delete', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Error deleting device and related items' });
     }
 });
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// แก้ไขสถานะอุปกรณ์แต่ละตัว (แก้สถานะ device_item ตาม item_id)
+app.put('/device_item/update', authenticateToken, async (req, res) => {
+    const { item_id, item_availability } = req.body;
+
+    if (!item_id || !item_availability) {
+        return res.status(400).json({ message: 'Please provide item_id and item_availability' });
+    }
+
+    try {
+        const oldItem = await db.oneOrNone(`
+            SELECT item_availability, device_id
+            FROM device_item
+            WHERE item_id = $1
+        `, [item_id]);
+
+        if (!oldItem) {
+            return res.status(404).json({ message: 'Item not found' });
+        }
+
+        //upadate สถานะใหม่
+        const result = await db.result(`
+            UPDATE device_item
+            SET item_availability = $1
+            WHERE item_id = $2
+        `, [item_availability, item_id]);
+
+        if (result.rowCount == 0) {
+            return res.status(404).json({ message: 'Item not found or no change in availability status' });
+        }
+
+        // ตรวจว่าready หรือไม่
+        if (oldItem.item_availability == 'ready' && item_availability != 'ready') {
+            await db.none(`
+                UPDATE device
+                SET device_availability = device_availability - 1
+                WHERE device_id = $1
+            `, [oldItem.device_id]);
+        } else if (oldItem.item_availability != 'ready' && item_availability == 'ready') {
+            await db.none(`
+                UPDATE device
+                SET device_availability = device_availability + 1
+                WHERE device_id = $1
+            `, [oldItem.device_id]);
+        }
+
+        res.status(200).json({ message: 'Item availability status updated successfully' });
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error updating item availability status' });
+    }
+});
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ดูคำร้องขอของแต่ละ user
@@ -297,7 +350,7 @@ app.get('/admin/loan_detail/:user_id/:transaction_id', authenticateToken, async 
 
         const requests = await db.any(`
             SELECT r.loan_id, e.item_name, e.item_serial, u.user_id, u.user_email, 
-                   r.loan_date, r.due_date, r.loan_status
+                   r.loan_date, r.due_date, r.item_availability_status
             FROM loan_detail r
             JOIN users u ON r.user_id = u.user_id
             JOIN device_item e ON r.item_id = e.item_id
@@ -308,7 +361,7 @@ app.get('/admin/loan_detail/:user_id/:transaction_id', authenticateToken, async 
         if (requests.length == 0) {
             return res.status(404).json({ user_id, transaction_id, requests: [], message: 'No requests found' });
         }
-
+        
         res.status(200).json({ user_id, transaction_id, requests });
     } catch (error) {
         console.error('ERROR:', error);
@@ -320,9 +373,10 @@ app.get('/admin/loan_detail/:user_id/:transaction_id', authenticateToken, async 
 app.get('/admin/loan_detail', authenticateToken, async (req, res) => {
     try {
         const requests = await db.any(`
-            SELECT t.user_id, u.user_firstname, u.user_email, t.loan_date, t.due_date, t.item_quantity
+            SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, t.loan_date, t.due_date, t.item_quantity, ld.loan_status
             FROM transaction t
             JOIN users u ON t.user_id = u.user_id
+            LEFT JOIN loan_detail ld ON t.transaction_id = ld.transaction_id
             ORDER BY t.loan_date DESC;
         `);
 
@@ -330,16 +384,23 @@ app.get('/admin/loan_detail', authenticateToken, async (req, res) => {
             return res.status(404).json({ message: 'No transactions found' });
         }
 
-        // Group the results by user_id
+        // Group the results by user_id and transaction_id
         const groupedRequests = requests.reduce((acc, curr) => {
-            acc.push({
-                user_id: curr.user_id,
-                user_firstname: curr.user_firstname,
-                user_email: curr.user_email,
-                loan_date: curr.loan_date,
-                due_date: curr.due_date,
-                item_quantity: curr.item_quantity
-            });
+            const existingRequest = acc.find(req => req.user_id === curr.user_id && req.transaction_id === curr.transaction_id);
+            if (existingRequest) {
+                existingRequest.loan_status = curr.loan_status; // Update loan_status
+            } else {
+                acc.push({
+                    user_id: curr.user_id,
+                    transaction_id: curr.transaction_id,
+                    user_firstname: curr.user_firstname,
+                    user_email: curr.user_email,
+                    loan_date: curr.loan_date,
+                    due_date: curr.due_date,
+                    item_quantity: curr.item_quantity,
+                    loan_status: curr.loan_status
+                });
+            }
             return acc;
         }, []);
 
@@ -354,6 +415,7 @@ app.get('/admin/loan_detail', authenticateToken, async (req, res) => {
 app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
     const { transaction_id, loan_status, admin_comment, location } = req.body;
     let item_availability_status;
+    
     if (loan_status == 'pending') {
         item_availability_status = 'pending';
     } else if (loan_status == 'approve') {
@@ -367,29 +429,35 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
     try {
         await db.tx(async t => {
             // ดึงข้อมูลของ user_id ที่เกี่ยวข้องกับ transaction_id
-            const user = await t.oneOrNone('SELECT user_id FROM transaction WHERE transaction_id = $1', [transaction_id]);
+            const transaction = await t.oneOrNone(
+                'SELECT user_id FROM transaction WHERE transaction_id = $1',
+                [transaction_id]
+            );
 
-            if (!user) {
+            if (!transaction) {
                 return res.status(404).json({ message: `Transaction with id ${transaction_id} not found` });
             }
 
-            const user_id = user.user_id;
+            const user_id = transaction.user_id;
 
-            // ดึงรายการ item_id จาก loan_detail โดยอ้างอิงจาก user_id
-            const items = await t.any('SELECT item_id FROM loan_detail WHERE user_id = $1 AND return_date IS NULL', [user_id]);
+            // ดึงรายการ item_id จาก loan_detail โดยอ้างอิงจาก transaction_id
+            const items = await t.any(
+                'SELECT item_id FROM loan_detail WHERE user_id = $1 AND return_date IS NULL AND transaction_id = $2',
+                [user_id, transaction_id]
+            );
 
-            if (items.length === 0) {
-                return res.status(404).json({ message: `No loan details found for user_id ${user_id}` });
+            if (items.length == 0) {
+                return res.status(404).json({ message: `No loan details found for transaction_id ${transaction_id}` });
             }
 
             // อัพเดทข้อมูลใน loan_detail
             const result = await t.result(
-                'UPDATE loan_detail SET loan_status = $1, item_availability_status = $2, admin_comment = $3, location_to_loan = $4 WHERE user_id = $5',
-                [loan_status, item_availability_status, admin_comment, location, user_id]
+                'UPDATE loan_detail SET loan_status = $1, item_availability_status = $2, admin_comment = $3, location_to_loan = $4 WHERE transaction_id = $5',
+                [loan_status, item_availability_status, admin_comment, location, transaction_id]
             );
 
             if (result.rowCount == 0) {
-                return res.status(404).json({ message: `No loan details found for user_id ${user_id}` });
+                return res.status(404).json({ message: `No loan details updated for transaction_id ${transaction_id}` });
             }
 
             // อัพเดทข้อมูลใน device_item ตามเงื่อนไข
@@ -421,12 +489,12 @@ app.post('/loan', authenticateToken, async (req, res) => {
     const { devices, due_date } = req.body;
     let itemAvailabilityStatus = 'ready';
     const loan_status = 'pending';
-    if (loan_status === 'pending') {
+    if (loan_status == 'pending') {
         itemAvailabilityStatus = 'pending';
     }
 
     try {
-        if (!Array.isArray(devices) || devices.length === 0) {
+        if (!Array.isArray(devices) || devices.length == 0) {
             return res.status(400).json({ message: 'Invalid selection. Please provide at least one device.' });
         }
 
@@ -479,7 +547,7 @@ app.post('/loan', authenticateToken, async (req, res) => {
 
                     nextLoanId++; // เพิ่ม loan_id สำหรับ item ต่อไป
 
-                    if (loan_status === 'pending') {
+                    if (loan_status == 'pending') {
                         await t.none(
                             'UPDATE device_item SET item_availability = $1 WHERE item_id = $2',
                             [itemAvailabilityStatus, item_id]
@@ -523,14 +591,15 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
 
     try {
         const user_id = req.user.id;
+        console.log(`User ID return: `, user_id);
         items = JSON.parse(req.body.items);
-        console.log(items);
-
-        if (!items || !Array.isArray(items) || items.length === 0) {
+        if (!items || !Array.isArray(items) || items.length == 0) {
+            if (req.file) {
+                fs.unlinkSync(req.file.path);
+            }
             return res.status(400).json({ message: 'Please provide a list of items to return.' });
         }
 
-        // ดึงรายการ transaction ที่ผู้ใช้ยืมมา
         const borrowedTransactions = await db.any(
             `SELECT item_id
              FROM loan_detail
@@ -541,45 +610,43 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
 
         const borrowedItemIds = borrowedTransactions.map(tx => tx.item_id);
 
-        // ตรวจสอบรายการ items ที่ส่งมา
         for (const item of items) {
             if (!borrowedItemIds.includes(item.item_id)) {
+                if (req.file) {
+                    fs.unlinkSync(req.file.path);
+                }
                 return res.status(400).json({ message: `Item ${item.item_id} was not borrowed by this user or has already been returned.` });
             }
         }
 
-        // ดำเนินการคืนอุปกรณ์
+        const returnDate = new Date(); // กำหนด return_date เป็นวันที่และเวลาปัจจุบัน
+
         await db.tx(async t => {
             for (const { item_id, return_status } of items) {
                 // สร้าง return_id ใหม่สำหรับแต่ละ item_id
                 const result = await t.one('SELECT COALESCE(MAX(return_id), 0) AS max_id FROM return_detail');
                 const nextId = result.max_id + 1;
-
                 // อัปเดตข้อมูลใน return_detail
                 await t.none(
-                    'INSERT INTO return_detail(return_id, user_id, item_id, return_status, location_to_return, return_comment, device_photo) VALUES($1, $2, $3, $4, $5, $6, $7)',
-                    [nextId, user_id, item_id, return_status, location, comment, req.file ? req.file.path : null]
+                    'INSERT INTO return_detail(return_id, user_id, item_id, return_status, location_to_return, return_comment, device_photo, return_date) VALUES($1, $2, $3, $4, $5, $6, $7, $8)',
+                    [nextId, user_id, item_id, return_status, location, comment, req.file ? req.file.path : null, returnDate]
                 );
-
                 // อัปเดตวันที่คืนใน loan_detail
                 await t.none(
-                    'UPDATE loan_detail SET return_date = CURRENT_DATE, loan_status = $1, item_availability_status = $2 WHERE user_id = $3 AND item_id = $4 AND return_date IS NULL',
-                    ['complete', 'complete', user_id, item_id]
+                    'UPDATE loan_detail SET return_date = $1, loan_status = $2, item_availability_status = $3 WHERE user_id = $4 AND item_id = $5 AND return_date IS NULL',
+                    [returnDate, 'complete', 'complete', user_id, item_id]
                 );
-
                 // อัปเดตสถานะใน device_item
                 await t.none(
                     'UPDATE device_item SET item_availability = $1, item_loaning = false WHERE item_id = $2',
                     ['ready', item_id]
                 );
-
-                // อัปเดตข้อมูลใน transaction (ถ้ามี)
+                // อัปเดตข้อมูลใน transaction
                 await t.none(
-                    'UPDATE transaction SET return_date = CURRENT_DATE, comment = $1, device_photo = $2 WHERE user_id = $3',
-                    [comment, req.file ? req.file.path : null, user_id]
+                    'UPDATE transaction SET return_date = $1, comment = $2, device_photo = $3 WHERE transaction_id = (SELECT transaction_id FROM loan_detail WHERE item_id = $4 AND user_id = $5 LIMIT 1)',
+                    [returnDate, comment, req.file ? req.file.path : null, item_id, user_id]
                 );
             }
-
             // อัปเดตจำนวนของ device ที่พร้อมใช้งานในตาราง device
             await t.none(
                 `UPDATE device 
@@ -600,11 +667,15 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
         });
     } catch (error) {
         console.error('ERROR:', error);
+        if (req.file) {
+            fs.unlinkSync(req.file.path);
+        }
         if (!res.headersSent) {
             res.status(500).json({ message: 'Error processing return' });
         }
     }
 });
+
 
 
 

@@ -665,17 +665,13 @@ app.post('/loan', authenticateToken, async (req, res) => {
     if (loan_status == 'pending') {
         itemAvailabilityStatus = 'pending';
     }
-
     try {
         if (!Array.isArray(devices) || devices.length == 0) {
             return res.status(400).json({ message: 'Invalid selection. Please provide at least one device.' });
         }
-
         const user_id = req.user.id;
         console.log('User ID:', user_id);
-
         const loan_date = new Date();
-
         await db.tx(async t => {
             let totalItemQuantity = 0;
 
@@ -757,7 +753,7 @@ app.post('/loan', authenticateToken, async (req, res) => {
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ***ฟังก์ชันการคืน***
-// user ยืนยันคืน
+// user คืน
 app.post('/return', authenticateToken, upload.single('device_photo'), async (req, res) => {
     let items;
 
@@ -801,17 +797,17 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
                 // อัปเดตข้อมูลใน return_detail
                 await t.none(
                     'INSERT INTO return_detail(return_id, user_id, item_id, return_status, device_photo, return_date) VALUES($1, $2, $3, $4, $5, $6)',
-                    [nextId, user_id, item_id, return_status, req.file ? req.file.path : null, returnDate]
+                    [nextId, user_id, item_id, 'pending', req.file ? req.file.path : null, returnDate]
                 );
                 // อัปเดตวันที่คืนใน loan_detail
                 await t.none(
                     'UPDATE loan_detail SET return_date = $1, loan_status = $2, item_availability_status = $3 WHERE user_id = $4 AND item_id = $5 AND return_date IS NULL',
-                    [returnDate, 'complete', 'complete', user_id, item_id]
+                    [returnDate, 'complete', 'pending', user_id, item_id]
                 );
                 // อัปเดตสถานะใน device_item
                 await t.none(
                     'UPDATE device_item SET item_availability = $1, item_loaning = false WHERE item_id = $2',
-                    ['ready', item_id]
+                    ['pending', item_id]
                 );
                 // อัปเดตข้อมูลใน transaction
                 await t.none(
@@ -822,22 +818,22 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
                 );
             }
             // อัปเดตจำนวนของ device ที่พร้อมใช้งานในตาราง device
-            await t.none(
-                `UPDATE device 
-                 SET device_availability = (
-                    SELECT COUNT(*) 
-                    FROM device_item 
-                    WHERE device_id = device.device_id 
-                    AND item_availability = 'ready'
-                 ) 
-                 WHERE device_id IN (
-                    SELECT DISTINCT device_id 
-                    FROM device_item 
-                    WHERE item_id IN (${items.map(item => item.item_id).join(',')})
-                 )`
-            );
+            // await t.none(
+            //     `UPDATE device 
+            //      SET device_availability = (
+            //         SELECT COUNT(*) 
+            //         FROM device_item 
+            //         WHERE device_id = device.device_id 
+            //         AND item_availability = 'ready'
+            //      ) 
+            //      WHERE device_id IN (
+            //         SELECT DISTINCT device_id 
+            //         FROM device_item 
+            //         WHERE item_id IN (${items.map(item => item.item_id).join(',')})
+            //      )`
+            // );
 
-            res.status(200).json({ message: 'Return processed successfully' });
+            res.status(200).json({ message: 'Return processed successfully, waiting for admin approval.' });
         });
     } catch (error) {
         console.error('ERROR:', error);
@@ -849,6 +845,9 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
         }
     }
 });
+
+
+
 
 
 

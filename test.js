@@ -285,96 +285,96 @@
 
 
 
-//             app.post('/return', authenticateToken, upload.single('device_photo'), async (req, res) => {
-//                 let items;
+            // app.post('/return', authenticateToken, upload.single('device_photo'), async (req, res) => {
+            //     let items;
             
-//                 try {
-//                     const user_id = req.user.id;
-//                     console.log(`User ID return: `, user_id);
-//                     items = JSON.parse(req.body.items);
-//                     if (!items || !Array.isArray(items) || items.length === 0) {
-//                         if (req.file) {
-//                             fs.unlinkSync(req.file.path);
-//                         }
-//                         return res.status(400).json({ message: 'Please provide a list of items to return.' });
-//                     }
+            //     try {
+            //         const user_id = req.user.id;
+            //         console.log(`User ID return: `, user_id);
+            //         items = JSON.parse(req.body.items);
+            //         if (!items || !Array.isArray(items) || items.length === 0) {
+            //             if (req.file) {
+            //                 fs.unlinkSync(req.file.path);
+            //             }
+            //             return res.status(400).json({ message: 'Please provide a list of items to return.' });
+            //         }
             
-//                     const borrowedTransactions = await db.any(
-//                         `SELECT item_id
-//                          FROM loan_detail
-//                          WHERE user_id = $1
-//                          AND return_date IS NULL`,
-//                         [user_id]
-//                     );
-//                     const borrowedItemIds = borrowedTransactions.map(tx => tx.item_id);
+            //         const borrowedTransactions = await db.any(
+            //             `SELECT item_id
+            //              FROM loan_detail
+            //              WHERE user_id = $1
+            //              AND return_date IS NULL`,
+            //             [user_id]
+            //         );
+            //         const borrowedItemIds = borrowedTransactions.map(tx => tx.item_id);
             
-//                     for (const item of items) {
-//                         if (!borrowedItemIds.includes(item.item_id)) {
-//                             if (req.file) {
-//                                 fs.unlinkSync(req.file.path);
-//                             }
-//                             return res.status(400).json({ message: `Item ${item.item_id} was not borrowed by this user or has already been returned.` });
-//                         }
-//                     }
+            //         for (const item of items) {
+            //             if (!borrowedItemIds.includes(item.item_id)) {
+            //                 if (req.file) {
+            //                     fs.unlinkSync(req.file.path);
+            //                 }
+            //                 return res.status(400).json({ message: `Item ${item.item_id} was not borrowed by this user or has already been returned.` });
+            //             }
+            //         }
             
-//                     const returnDate = new Date(); // กำหนด return_date เป็นวันที่และเวลาปัจจุบัน
+            //         const returnDate = new Date(); // กำหนด return_date เป็นวันที่และเวลาปัจจุบัน
             
-//                     await db.tx(async t => {
-//                         for (const { item_id, return_status } of items) {
-//                             // สร้าง return_id ใหม่สำหรับแต่ละ item_id
-//                             const result = await t.one('SELECT COALESCE(MAX(return_id), 0) AS max_id FROM return_detail');
-//                             const nextId = result.max_id + 1;
-//                             // อัปเดตข้อมูลใน return_detail
-//                             await t.none(
-//                                 'INSERT INTO return_detail(return_id, user_id, item_id, return_status, device_photo, return_date) VALUES($1, $2, $3, $4, $5, $6)',
-//                                 [nextId, user_id, item_id, return_status, req.file ? req.file.path : null, returnDate]
-//                             );
-//                             // อัปเดตวันที่คืนใน loan_detail
-//                             await t.none(
-//                                 'UPDATE loan_detail SET return_date = $1, loan_status = $2, item_availability_status = $3 WHERE user_id = $4 AND item_id = $5 AND return_date IS NULL',
-//                                 [returnDate, 'complete', 'complete', user_id, item_id]
-//                             );
-//                             // อัปเดตสถานะใน device_item
-//                             await t.none(
-//                                 'UPDATE device_item SET item_availability = $1, item_loaning = false WHERE item_id = $2',
-//                                 ['ready', item_id]
-//                             );
-//                             // อัปเดตข้อมูลใน transaction
-//                             await t.none(
-//                                 `UPDATE transaction 
-//                                 SET return_date = $1, device_photo = $2, loan_status = 'complete' 
-//                                 WHERE transaction_id = (SELECT transaction_id FROM loan_detail WHERE item_id = $3 AND user_id = $4 LIMIT 1)`,
-//                                 [returnDate, req.file ? req.file.path : null, item_id, user_id]
-//                             );
-//                         }
-//                         // อัปเดตจำนวนของ device ที่พร้อมใช้งานในตาราง device
-//                         await t.none(
-//                             `UPDATE device 
-//                              SET device_availability = (
-//                                 SELECT COUNT(*) 
-//                                 FROM device_item 
-//                                 WHERE device_id = device.device_id 
-//                                 AND item_availability = 'ready'
-//                              ) 
-//                              WHERE device_id IN (
-//                                 SELECT DISTINCT device_id 
-//                                 FROM device_item 
-//                                 WHERE item_id IN (${items.map(item => item.item_id).join(',')})
-//                              )`
-//                         );
+            //         await db.tx(async t => {
+            //             for (const { item_id, return_status } of items) {
+            //                 // สร้าง return_id ใหม่สำหรับแต่ละ item_id
+            //                 const result = await t.one('SELECT COALESCE(MAX(return_id), 0) AS max_id FROM return_detail');
+            //                 const nextId = result.max_id + 1;
+            //                 // อัปเดตข้อมูลใน return_detail
+            //                 await t.none(
+            //                     'INSERT INTO return_detail(return_id, user_id, item_id, return_status, device_photo, return_date) VALUES($1, $2, $3, $4, $5, $6)',
+            //                     [nextId, user_id, item_id, return_status, req.file ? req.file.path : null, returnDate]
+            //                 );
+            //                 // อัปเดตวันที่คืนใน loan_detail
+            //                 await t.none(
+            //                     'UPDATE loan_detail SET return_date = $1, loan_status = $2, item_availability_status = $3 WHERE user_id = $4 AND item_id = $5 AND return_date IS NULL',
+            //                     [returnDate, 'complete', 'complete', user_id, item_id]
+            //                 );
+            //                 // อัปเดตสถานะใน device_item
+            //                 await t.none(
+            //                     'UPDATE device_item SET item_availability = $1, item_loaning = false WHERE item_id = $2',
+            //                     ['ready', item_id]
+            //                 );
+            //                 // อัปเดตข้อมูลใน transaction
+            //                 await t.none(
+            //                     `UPDATE transaction 
+            //                     SET return_date = $1, device_photo = $2, loan_status = 'complete' 
+            //                     WHERE transaction_id = (SELECT transaction_id FROM loan_detail WHERE item_id = $3 AND user_id = $4 LIMIT 1)`,
+            //                     [returnDate, req.file ? req.file.path : null, item_id, user_id]
+            //                 );
+            //             }
+            //             // อัปเดตจำนวนของ device ที่พร้อมใช้งานในตาราง device
+            //             await t.none(
+            //                 `UPDATE device 
+            //                  SET device_availability = (
+            //                     SELECT COUNT(*) 
+            //                     FROM device_item 
+            //                     WHERE device_id = device.device_id 
+            //                     AND item_availability = 'ready'
+            //                  ) 
+            //                  WHERE device_id IN (
+            //                     SELECT DISTINCT device_id 
+            //                     FROM device_item 
+            //                     WHERE item_id IN (${items.map(item => item.item_id).join(',')})
+            //                  )`
+            //             );
             
-//                         res.status(200).json({ message: 'Return processed successfully' });
-//                     });
-//                 } catch (error) {
-//                     console.error('ERROR:', error);
-//                     if (req.file) {
-//                         fs.unlinkSync(req.file.path);
-//                     }
-//                     if (!res.headersSent) {
-//                         res.status(500).json({ message: 'Error processing return' });
-//                     }
-//                 }
-//             });
+            //             res.status(200).json({ message: 'Return processed successfully' });
+            //         });
+            //     } catch (error) {
+            //         console.error('ERROR:', error);
+            //         if (req.file) {
+            //             fs.unlinkSync(req.file.path);
+            //         }
+            //         if (!res.headersSent) {
+            //             res.status(500).json({ message: 'Error processing return' });
+            //         }
+            //     }
+            // });
             
             
             
@@ -441,3 +441,126 @@
 //                 console.log(`Server is running on http://localhost:${port}`);
 //             });
             
+// admin ยืนยันการคืน
+// app.put('/admin/confirm-return', authenticateToken, async (req, res) => {
+//     const items = req.body; // ใช้ req.body โดยตรง
+
+//     try {
+//         if (!items || !Array.isArray(items) || items.length == 0) {
+//             return res.status(400).json({ message: 'Please provide a list of items to confirm return.' });
+//         }
+
+//         let notReturnedItems = [];
+//         let allItemsReturned = true;
+
+//         await db.tx(async t => {
+//             for (const { item_id, return_status } of items) {
+//                 // ตรวจสอบสถานะการคืนจาก return_detail
+//                 const returnDetail = await t.oneOrNone(
+//                     `SELECT return_status FROM return_detail WHERE item_id = $1 AND return_status = 'pending'`,
+//                     [item_id]
+//                 );
+
+//                 if (!returnDetail) {
+//                     notReturnedItems.push(item_id);
+//                     allItemsReturned = false; // มีบางรายการที่ไม่ได้คืน
+//                     continue; // ถ้าไม่เจอข้อมูลที่เป็น pending ข้ามรายการนี้ไป
+//                 }
+
+//                 if (return_status == 'complete') {
+//                     // เปลี่ยน return_status เป็น complete
+//                     await t.none(
+//                         `UPDATE return_detail 
+//                          SET return_status = $1 
+//                          WHERE item_id = $2`,
+//                         ['complete', item_id]
+//                     );
+
+//                     // อัปเดตข้อมูลใน loan_detail ว่า complete และสถานะ item_availability_status
+//                     await t.none(
+//                         `UPDATE loan_detail 
+//                          SET loan_status = $1, item_availability_status = $2 
+//                          WHERE item_id = $3 AND return_date IS NOT NULL`,
+//                         ['complete', 'complete', item_id]
+//                     );
+
+//                     // อัปเดต device_item ให้เป็นพร้อมใช้งาน
+//                     await t.none(
+//                         `UPDATE device_item 
+//                          SET item_availability = 'ready', item_loaning = false 
+//                          WHERE item_id = $1`,
+//                         [item_id]
+//                     );
+
+//                     // อัปเดตจำนวน device_availability ให้เพิ่มขึ้นในตาราง device
+//                     await t.none(
+//                         `UPDATE device 
+//                          SET device_availability = device_availability + 1 
+//                          WHERE device_id = (
+//                             SELECT device_id FROM device_item WHERE item_id = $1
+//                          )`,
+//                         [item_id]
+//                     );
+//                 }
+//             }
+
+//             // ตรวจสอบว่ามีรายการที่ยังไม่ได้คืนหรือไม่
+//             if (notReturnedItems.length > 0) {
+//                 res.status(200).json({
+//                     message: 'Partial return confirmed. Some items are still missing.',
+//                     notReturnedItems
+//                 });
+//             } else if (!allItemsReturned) {
+//                 res.status(200).json({ message: 'No items to return.' });
+//             } else {
+//                 res.status(200).json({ message: 'All items returned successfully and confirmed.' });
+//             }
+//         });
+//     } catch (error) {
+//         console.error('ERROR:', error);
+//         res.status(500).json({ message: 'Error processing return confirmation.' });
+//     }
+// });
+// // ดูการคืนที่เป็น pending
+// app.get('/admin/return_detail/pending', authenticateToken, async (req, res) => {
+//     try {
+//         // ดึงข้อมูลจาก return_detail แทน loan_detail
+//         const requests = await db.any(`
+//             SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, t.return_date, t.due_date, t.item_quantity, rd.return_status
+//             FROM transaction t
+//             JOIN users u ON t.user_id = u.user_id
+//             LEFT JOIN return_detail rd ON t.transaction_id = rd.transaction_id
+//             WHERE rd.return_status = 'pending'
+//             ORDER BY t.loan_date DESC;
+//         `);
+
+//         if (requests.length == 0) {
+//             return res.status(404).json({ message: 'No pending return transactions found' });
+//         }
+
+//         // Group the results by user_id and transaction_id
+//         const groupedRequests = requests.reduce((acc, curr) => {
+//             const existingRequest = acc.find(req => req.user_id == curr.user_id && req.transaction_id == curr.transaction_id);
+//             if (existingRequest) {
+//                 existingRequest.return_status = curr.return_status; // Update return_status
+//             } else {
+//                 acc.push({
+//                     user_id: curr.user_id,
+//                     transaction_id: curr.transaction_id,
+//                     user_firstname: curr.user_firstname,
+//                     user_email: curr.user_email,
+//                     return_date: curr.return_date,
+//                     due_date: curr.due_date,
+//                     item_quantity: curr.item_quantity,
+//                     return_status: curr.return_status
+//                 });
+//             }
+//             return acc;
+//         }, []);
+
+//         res.status(200).json(groupedRequests);
+//     } catch (error) {
+//         console.error('ERROR:', error);
+//         res.status(500).json({ message: 'Error fetching return transactions' });
+//     }
+// });

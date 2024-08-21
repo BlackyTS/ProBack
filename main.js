@@ -802,6 +802,8 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
         const returnDate = new Date(); // กำหนด return_date เป็นวันที่และเวลาปัจจุบัน
 
         await db.tx(async t => {
+            // คำสั่ง Map เพื่อเก็บจำนวนที่คืนสำหรับแต่ละ device_id
+            let deviceUpdates = new Map();
 
             for (const { item_id, return_status } of items) {
                 // ดึง transaction_id จาก loan_detail ของ item_id นั้น ๆ
@@ -817,19 +819,19 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
                 // อัปเดตข้อมูลใน return_detail โดยใช้ transaction_id ที่ดึงมา
                 await t.none(
                     'INSERT INTO return_detail(return_id, user_id, item_id, return_status, device_photo, return_date, transaction_id) VALUES($1, $2, $3, $4, $5, $6, $7)',
-                    [nextId, user_id, item_id, 'pending', req.file ? req.file.path : null, returnDate, transaction_id]
+                    [nextId, user_id, item_id, 'complete', req.file ? req.file.path : null, returnDate, transaction_id]
                 );
 
                 // อัปเดตวันที่คืนใน loan_detail
                 await t.none(
                     'UPDATE loan_detail SET return_date = $1, loan_status = $2, item_availability_status = $3 WHERE user_id = $4 AND item_id = $5 AND return_date IS NULL',
-                    [returnDate, 'complete', 'pending', user_id, item_id]
+                    [returnDate, 'complete', 'complete', user_id, item_id]
                 );
 
                 // อัปเดตสถานะใน device_item
                 await t.none(
                     'UPDATE device_item SET item_availability = $1, item_loaning = false WHERE item_id = $2',
-                    ['pending', item_id]
+                    ['ready', item_id]
                 );
 
                 // อัปเดตข้อมูลใน transaction
@@ -839,9 +841,31 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
                      WHERE transaction_id = $3`,
                     [returnDate, req.file ? req.file.path : null, transaction_id]
                 );
+
+                // คำนวณจำนวนที่คืนสำหรับแต่ละ device_id
+                const { device_id } = await t.one(
+                    'SELECT device_id FROM device_item WHERE item_id = $1',
+                    [item_id]
+                );
+
+                if (!deviceUpdates.has(device_id)) {
+                    deviceUpdates.set(device_id, 0);
+                }
+
+                deviceUpdates.set(device_id, deviceUpdates.get(device_id) + 1);
             }
 
-            res.status(200).json({ message: 'Return processed successfully, waiting for admin approval.' });
+            // อัปเดตจำนวนของ device ที่พร้อมใช้งานในตาราง device
+            for (const [device_id, returnedCount] of deviceUpdates) {
+                await t.none(
+                    `UPDATE device 
+                     SET device_availability = device_availability + $1 
+                     WHERE device_id = $2`,
+                    [returnedCount, device_id]
+                );
+            }
+
+            res.status(200).json({ message: 'Return processed successfully.' });
         });
     } catch (error) {
         console.error('ERROR:', error);
@@ -855,130 +879,6 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
 });
 
 
-
-// admin ยืนยันการคืน
-app.put('/admin/confirm-return', authenticateToken, async (req, res) => {
-    const items = req.body; // ใช้ req.body โดยตรง
-
-    try {
-        if (!items || !Array.isArray(items) || items.length == 0) {
-            return res.status(400).json({ message: 'Please provide a list of items to confirm return.' });
-        }
-
-        let notReturnedItems = [];
-        let allItemsReturned = true;
-
-        await db.tx(async t => {
-            for (const { item_id, return_status } of items) {
-                // ตรวจสอบสถานะการคืนจาก return_detail
-                const returnDetail = await t.oneOrNone(
-                    `SELECT return_status FROM return_detail WHERE item_id = $1 AND return_status = 'pending'`,
-                    [item_id]
-                );
-
-                if (!returnDetail) {
-                    notReturnedItems.push(item_id);
-                    allItemsReturned = false; // มีบางรายการที่ไม่ได้คืน
-                    continue; // ถ้าไม่เจอข้อมูลที่เป็น pending ข้ามรายการนี้ไป
-                }
-
-                if (return_status == 'complete') {
-                    // เปลี่ยน return_status เป็น complete
-                    await t.none(
-                        `UPDATE return_detail 
-                         SET return_status = $1 
-                         WHERE item_id = $2`,
-                        ['complete', item_id]
-                    );
-
-                    // อัปเดตข้อมูลใน loan_detail ว่า complete และสถานะ item_availability_status
-                    await t.none(
-                        `UPDATE loan_detail 
-                         SET loan_status = $1, item_availability_status = $2 
-                         WHERE item_id = $3 AND return_date IS NOT NULL`,
-                        ['complete', 'complete', item_id]
-                    );
-
-                    // อัปเดต device_item ให้เป็นพร้อมใช้งาน
-                    await t.none(
-                        `UPDATE device_item 
-                         SET item_availability = 'ready', item_loaning = false 
-                         WHERE item_id = $1`,
-                        [item_id]
-                    );
-
-                    // อัปเดตจำนวน device_availability ให้เพิ่มขึ้นในตาราง device
-                    await t.none(
-                        `UPDATE device 
-                         SET device_availability = device_availability + 1 
-                         WHERE device_id = (
-                            SELECT device_id FROM device_item WHERE item_id = $1
-                         )`,
-                        [item_id]
-                    );
-                }
-            }
-
-            // ตรวจสอบว่ามีรายการที่ยังไม่ได้คืนหรือไม่
-            if (notReturnedItems.length > 0) {
-                res.status(200).json({
-                    message: 'Partial return confirmed. Some items are still missing.',
-                    notReturnedItems
-                });
-            } else if (!allItemsReturned) {
-                res.status(200).json({ message: 'No items to return.' });
-            } else {
-                res.status(200).json({ message: 'All items returned successfully and confirmed.' });
-            }
-        });
-    } catch (error) {
-        console.error('ERROR:', error);
-        res.status(500).json({ message: 'Error processing return confirmation.' });
-    }
-});
-// ดูการคืนที่เป็น pending
-app.get('/admin/return_detail/pending', authenticateToken, async (req, res) => {
-    try {
-        // ดึงข้อมูลจาก return_detail แทน loan_detail
-        const requests = await db.any(`
-            SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, t.return_date, t.due_date, t.item_quantity, rd.return_status
-            FROM transaction t
-            JOIN users u ON t.user_id = u.user_id
-            LEFT JOIN return_detail rd ON t.transaction_id = rd.transaction_id
-            WHERE rd.return_status = 'pending'
-            ORDER BY t.loan_date DESC;
-        `);
-
-        if (requests.length == 0) {
-            return res.status(404).json({ message: 'No pending return transactions found' });
-        }
-
-        // Group the results by user_id and transaction_id
-        const groupedRequests = requests.reduce((acc, curr) => {
-            const existingRequest = acc.find(req => req.user_id == curr.user_id && req.transaction_id == curr.transaction_id);
-            if (existingRequest) {
-                existingRequest.return_status = curr.return_status; // Update return_status
-            } else {
-                acc.push({
-                    user_id: curr.user_id,
-                    transaction_id: curr.transaction_id,
-                    user_firstname: curr.user_firstname,
-                    user_email: curr.user_email,
-                    return_date: curr.return_date,
-                    due_date: curr.due_date,
-                    item_quantity: curr.item_quantity,
-                    return_status: curr.return_status
-                });
-            }
-            return acc;
-        }, []);
-
-        res.status(200).json(groupedRequests);
-    } catch (error) {
-        console.error('ERROR:', error);
-        res.status(500).json({ message: 'Error fetching return transactions' });
-    }
-});
 
 
 

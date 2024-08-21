@@ -350,7 +350,7 @@ app.get('/admin/loan_detail/:user_id/:transaction_id', authenticateToken, async 
 
         const requests = await db.any(`
             SELECT r.loan_id, e.item_name, e.item_serial, u.user_id, u.user_email, 
-                   r.loan_date, r.due_date, r.item_availability_status
+                   r.loan_date, r.due_date, r.item_availability_status, r.item_id
             FROM loan_detail r
             JOIN users u ON r.user_id = u.user_id
             JOIN device_item e ON r.item_id = e.item_id
@@ -358,10 +358,10 @@ app.get('/admin/loan_detail/:user_id/:transaction_id', authenticateToken, async 
             ORDER BY r.loan_date DESC;
         `, [user_id, transaction_id]);
 
-        if (requests.length == 0) {
+        if (requests.length === 0) {
             return res.status(404).json({ user_id, transaction_id, requests: [], message: 'No requests found' });
         }
-        
+
         res.status(200).json({ user_id, transaction_id, requests });
     } catch (error) {
         console.error('ERROR:', error);
@@ -766,7 +766,11 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
     try {
         const user_id = req.user.id;
         console.log(`User ID return: `, user_id);
-        items = JSON.parse(req.body.items);
+
+        // ใช้ข้อมูลตรงๆ จาก req.body
+        items = req.body.items;
+
+        // ตรวจสอบว่า items เป็น array และไม่ว่าง
         if (!items || !Array.isArray(items) || items.length == 0) {
             if (req.file) {
                 fs.unlinkSync(req.file.path);
@@ -774,6 +778,7 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
             return res.status(400).json({ message: 'Please provide a list of items to return.' });
         }
 
+        // ตรวจสอบรายการที่ถูกยืมโดย user นี้
         const borrowedTransactions = await db.any(
             `SELECT item_id
              FROM loan_detail
@@ -784,6 +789,7 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
 
         const borrowedItemIds = borrowedTransactions.map(tx => tx.item_id);
 
+        // ตรวจสอบว่าแต่ละ item_id ใน items เป็นของผู้ใช้นี้จริงๆ
         for (const item of items) {
             if (!borrowedItemIds.includes(item.item_id)) {
                 if (req.file) {
@@ -829,8 +835,8 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
                 // อัปเดตข้อมูลใน transaction
                 await t.none(
                     `UPDATE transaction 
-                    SET return_date = $1, device_photo = $2, loan_status = 'complete' 
-                    WHERE transaction_id = $3`,
+                     SET return_date = $1, device_photo = $2, loan_status = 'complete' 
+                     WHERE transaction_id = $3`,
                     [returnDate, req.file ? req.file.path : null, transaction_id]
                 );
             }
@@ -847,6 +853,7 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
         }
     }
 });
+
 
 
 // admin ยืนยันการคืน

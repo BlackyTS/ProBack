@@ -28,14 +28,15 @@ const secret = process.env.JWT_SECRET;
 const port = 8000
 
 const connectionOptions = {
-    host: 'localhost',
-    port: 5432,
-    database: 'ProjectTEST',
-    user: 'postgres',
-    password: 'admin'
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT,
+    database: process.env.DB_NAME,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD
 }
 
 const db = pgp(connectionOptions);
+
 app.use(cookieParser());
 
 // ตั้งค่า multer สำหรับการอัปโหลดรูปภาพ

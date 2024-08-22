@@ -9,6 +9,7 @@ const cors = require('cors')
 const multer = require('multer')
 const path = require('path')
 const fs = require('fs');
+const axios = require('axios');
 
 require('dotenv').config()
 
@@ -665,6 +666,7 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ***ฟังก์ชัน การยืม***
 // user ขอคำร้องยืนยันการยืม
+const { sendLineNotify } = require('./Function/nontify');
 app.post('/loan', authenticateToken, async (req, res) => {
     const { devices, due_date } = req.body;
     let itemAvailabilityStatus = 'ready';
@@ -686,7 +688,7 @@ app.post('/loan', authenticateToken, async (req, res) => {
             const maxTransaction = await t.one('SELECT COALESCE(MAX(transaction_id), 0) AS max_id FROM transaction');
             const nextTransactionId = maxTransaction.max_id + 1;
 
-            // บันทึกข้อมูลลงในตาราง transaction และใช้ transaction_id ถัดไป พร้อมเพิ่ม loan_status
+            // บันทึกข้อมูลลงในตาราง transaction
             await t.none(
                 'INSERT INTO transaction(transaction_id, user_id, loan_date, due_date, item_quantity, loan_status) VALUES($1, $2, $3, $4, $5, $6)',
                 [nextTransactionId, user_id, loan_date, due_date, totalItemQuantity, loan_status]
@@ -742,13 +744,17 @@ app.post('/loan', authenticateToken, async (req, res) => {
                 );
             }
 
-            // อัปเดต item_quantity ใน transaction หลังจากนับจำนวนอุปกรณ์ทั้งหมด
+            // อัปเดต item_quantity ในตาราง transaction
             await t.none(
                 'UPDATE transaction SET item_quantity = $1 WHERE transaction_id = $2',
                 [totalItemQuantity, nextTransactionId]
             );
 
             res.status(200).json({ message: 'Loan request processed successfully' });
+
+            // ส่งการแจ้งเตือนผ่าน Line Notify
+            const notifyMessage = `มีการขอยืมอุปกรณ์ใหม่แล้ว. User ID: ${user_id}, จำนวนรวม: ${totalItemQuantity}`;
+            await sendLineNotify(notifyMessage);
         });
     } catch (error) {
         console.error('ERROR:', error);
@@ -878,7 +884,6 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
         }
     }
 });
-
 
 
 

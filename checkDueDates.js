@@ -16,6 +16,7 @@ const getLoanDetails = async () => {
             SELECT user_id, due_date 
             FROM transaction
             WHERE return_date IS NULL AND due_date >= CURRENT_DATE
+            AND loan_status NOT IN ('deny', 'cancel')
         `);
     } catch (error) {
         console.error('Error fetching loan details:', error);
@@ -28,7 +29,7 @@ const checkDueDates = async () => {
         const loans = await getLoanDetails();
         const today = new Date();
         const threeDaysLater = new Date();
-        threeDaysLater.setDate(today.getDate() + 5);
+        threeDaysLater.setDate(today.getDate() + 3);
 
         for (const loan of loans) {
             const dueDate = new Date(loan.due_date);

@@ -153,21 +153,41 @@ app.delete('/delete', authenticateToken, async (req, res) => {
 app.post('/devices/add', authenticateToken, async (req, res) => {
     const { name, description, limit, serial } = req.body;
     try {
+        // เพิ่มข้อมูลอุปกรณ์ใหม่
         const result = await db.one(
-            'INSERT INTO device(device_name, device_description, device_limit, device_serial ,device_availability) VALUES($1, $2, $3, $4, $5) RETURNING device_id',
+            'INSERT INTO device(device_name, device_description, device_limit, device_serial, device_availability) VALUES($1, $2, $3, $4, $5) RETURNING device_id',
             [name, description, limit, serial, limit]
-        );        
+        );
 
         const deviceId = result.device_id;
 
+        // สร้างโฟลเดอร์สำหรับ QR Code ในโฟลเดอร์ qrcodes
+        const qrCodeDir = path.join(__dirname, 'qrcodes', serial);
+        if (!fs.existsSync(qrCodeDir)) {
+            fs.mkdirSync(qrCodeDir, { recursive: true });
+        }
+
         for (let i = 1; i <= limit; i++) {
+            const itemSerial = `${serial}/${i}`;
+            const qrCodeData = `${itemSerial}`; // ข้อมูลที่ใช้ใน QR Code
+            
+            // สร้าง QR Code และบันทึกเป็นไฟล์
+            const qrCodeFileName = `${serial}-${i}.png`; // ใช้เพียงเลขลำดับเป็นชื่อไฟล์
+            const qrCodeFilePath = path.join(qrCodeDir, qrCodeFileName);
+            await QRCode.toFile(qrCodeFilePath, qrCodeData);
+
+            // อ่านไฟล์ QR Code เป็น base64
+            const qrCodeBase64 = fs.readFileSync(qrCodeFilePath, { encoding: 'base64' });
+            const qrCodeUrl = `data:image/png;base64,${qrCodeBase64}`;
+
+            // เพิ่มข้อมูลลงในตาราง device_item
             await db.none(
-                'INSERT INTO device_item(item_name, item_description, device_id, item_availability, item_serial) VALUES($1, $2, $3, $4, $5)',
-                [name, description, deviceId, 'ready' ,`${serial}/${i}`]
+                'INSERT INTO device_item(item_name, item_description, device_id, item_availability, item_serial, item_qrcode) VALUES($1, $2, $3, $4, $5, $6)',
+                [name, description, deviceId, 'ready', itemSerial, qrCodeUrl]
             );
         }
         
-        res.status(200).json({ message: 'Device and items added successfully' });
+        res.status(200).json({ message: 'Device and items added successfully with QR codes' });
     } catch (error) {
         console.error('ERROR:', error);
         res.status(500).json({ message: 'Error adding device and items' });
@@ -260,24 +280,35 @@ app.delete('/devices/delete', authenticateToken, async (req, res) => {
         const user_id = req.user.id;
         console.log('User ID:', user_id);
         const user_role = req.user.role;
+
         // ตรวจสอบว่าผู้ใช้มีบทบาทเป็น admin หรือไม่
         if (user_role != 2) {
             return res.status(403).json({ message: 'Forbidden: Only admins can delete devices' });
         }
-        const deviceExists = await db.oneOrNone('SELECT 1 FROM device WHERE device_id = $1', [id]);
-        if (!deviceExists) {
+
+        const device = await db.oneOrNone('SELECT device_serial FROM device WHERE device_id = $1', [id]);
+        if (!device) {
             // ตรวจสอบว่ามี device ที่ต้องการลบอยู่ในฐานข้อมูลหรือไม่
             return res.status(404).json({ message: 'Device not found' });
         }
+
+        const serial = device.device_serial;
+
         await db.tx(async t => {
             await t.none('DELETE FROM device_item WHERE device_id = $1', [id]);
             await t.none('DELETE FROM device WHERE device_id = $1', [id]);
         });
 
-        res.status(200).json({ message: 'Device and related items deleted successfully' });
+        // ลบโฟลเดอร์ที่มีชื่อเป็น serial
+        const qrCodeDir = path.join(__dirname, 'qrcodes', serial);
+        if (fs.existsSync(qrCodeDir)) {
+            fs.rmSync(qrCodeDir, { recursive: true, force: true });
+        }
+
+        res.status(200).json({ message: 'Device, related items, and folder deleted successfully' });
     } catch (error) {
         console.error('ERROR:', error);
-        res.status(500).json({ message: 'Error deleting device and related items' });
+        res.status(500).json({ message: 'Error deleting device, related items, or folder' });
     }
 });
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -699,10 +730,27 @@ app.post('/loan', authenticateToken, async (req, res) => {
             const maxTransaction = await t.one('SELECT COALESCE(MAX(transaction_id), 0) AS max_id FROM transaction');
             const nextTransactionId = maxTransaction.max_id + 1;
 
+            // สร้าง serial number สำหรับ transaction
+            const serialNumber = `TRANS-${nextTransactionId}-${Date.now()}`;
+
+            // สร้าง QR code สำหรับ transaction
+            const qrCodeData = JSON.stringify({
+                transaction_id: nextTransactionId,
+                serial: serialNumber,
+                user_id: user_id,
+                loan_date: loan_date,
+                due_date: due_date
+            });
+
+            const qrCodeFileName = `transaction_${nextTransactionId}.png`;
+            const qrCodePath = path.join(__dirname, 'transaction_qrcodes', qrCodeFileName);
+
+            await QRCode.toFile(qrCodePath, qrCodeData);
+
             // บันทึกข้อมูลลงในตาราง transaction
             await t.none(
-                'INSERT INTO transaction(transaction_id, user_id, loan_date, due_date, item_quantity, loan_status) VALUES($1, $2, $3, $4, $5, $6)',
-                [nextTransactionId, user_id, loan_date, due_date, totalItemQuantity, loan_status]
+                'INSERT INTO transaction(transaction_id, user_id, loan_date, due_date, item_quantity, loan_status, transaction_qrcode) VALUES($1, $2, $3, $4, $5, $6, $7)',
+                [nextTransactionId, user_id, loan_date, due_date, totalItemQuantity, loan_status, serialNumber]
             );
 
             // รับค่า loan_id สูงสุดจากฐานข้อมูล
@@ -734,7 +782,7 @@ app.post('/loan', authenticateToken, async (req, res) => {
                         [nextLoanId, user_id, item_id, loan_status, due_date, itemAvailabilityStatus, device_id, loan_date, nextTransactionId, cancelable_until]
                     );
 
-                    nextLoanId++; // เพิ่ม loan_id สำหรับ item ต่อไป
+                    nextLoanId++;
 
                     if (loan_status == 'pending') {
                         await t.none(
@@ -761,7 +809,7 @@ app.post('/loan', authenticateToken, async (req, res) => {
                 [totalItemQuantity, nextTransactionId]
             );
 
-            res.status(200).json({ message: 'Loan request processed successfully' });
+            res.status(200).json({ message: 'Loan request processed successfully', transactionId: nextTransactionId, serialNumber: serialNumber });
 
             // ส่งการแจ้งเตือนผ่าน Line Notify
             const notifyMessage = `มีการขอยืมอุปกรณ์ใหม่แล้ว. User ID: ${user_id}, จำนวนรวม: ${totalItemQuantity}`;
@@ -860,6 +908,7 @@ app.post('/cancel-loan/:transaction_id', authenticateToken, async (req, res) => 
         }
     }
 });
+// ดูรายการที่ cancel
 app.get('/admin/loan_detail/cancel', authenticateToken, async (req, res) => {
     try {
         const requests = await db.any(`
@@ -1042,7 +1091,7 @@ app.get('/return-data', async (req, res) => {
         }
 
         // เรียกฟังก์ชัน POST '/return' ด้วยข้อมูลจาก QR code
-        const response = await fetch('https://c411-202-80-249-188.ngrok-free.app/return-qr', { // เปลี่ยน URL ให้ตรงกับเส้นทางที่ต้องการเรียก
+        const response = await fetch('https://d876-2001-fb1-10b-d0e-54c7-f338-daa1-c447.ngrok-free.app/return-qr', { // เปลี่ยน URL ให้ตรงกับเส้นทางที่ต้องการเรียก
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -1161,13 +1210,6 @@ app.post('/return-qr', upload.single('device_photo'), async (req, res) => {
     }
 });
 
-
-
-
-
-
-
-
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ประวัติการยืม-คืนที่สำเร็จแล้ว
 app.get('/admin/history', authenticateToken, async (req, res) => {
@@ -1244,12 +1286,13 @@ cron.schedule('0 0 * * *', () => {
     checkDueDates();
 });
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ดูรายการตาม user-id ที่ล็อกอินมา 
 app.get('/user/loan_detail', authenticateToken, async (req, res) => {
     try {
-        const userId = req.user.id; //
+        const userId = req.user.id;
         console.log(userId);
         const requests = await db.any(`
-            SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, t.loan_date, t.due_date, t.item_quantity, ld.loan_status
+            SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, t.loan_date, t.due_date, t.item_quantity, ld.loan_status, t.transaction_qrcode
             FROM transaction t
             JOIN users u ON t.user_id = u.user_id
             LEFT JOIN loan_detail ld ON t.transaction_id = ld.transaction_id
@@ -1275,7 +1318,8 @@ app.get('/user/loan_detail', authenticateToken, async (req, res) => {
                     loan_date: moment.utc(curr.loan_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
                     due_date: moment.utc(curr.due_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
                     item_quantity: curr.item_quantity,
-                    loan_status: curr.loan_status
+                    loan_status: curr.loan_status,
+                    transaction_qrcode: curr.transaction_qrcode
                 });
             }
             return acc;
@@ -1287,7 +1331,42 @@ app.get('/user/loan_detail', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Error fetching transactions' });
     }
 });
+// ดูรายการตาม user-id ที่ล็อกอินมาแบบละเอียด
+app.get('/user/loan_detail/:user_id/:transaction_id', authenticateToken, async (req, res) => {
+    try {
+        const user_id = parseInt(req.params.user_id, 10); 
+        const transaction_id = parseInt(req.params.transaction_id, 10); 
 
+        if (isNaN(user_id) || isNaN(transaction_id)) {
+            return res.status(400).json({ message: 'Invalid user ID or transaction ID' });
+        }
+
+        const requests = await db.any(`
+            SELECT r.loan_id, e.item_name, e.item_serial, u.user_id, u.user_email, 
+                   r.loan_date, r.due_date, r.item_availability_status, r.item_id
+            FROM loan_detail r
+            JOIN users u ON r.user_id = u.user_id
+            JOIN device_item e ON r.item_id = e.item_id
+            WHERE r.user_id = $1 AND r.transaction_id = $2
+            ORDER BY r.loan_date DESC;
+        `, [user_id, transaction_id]);
+
+        if (requests.length === 0) {
+            return res.status(404).json({ user_id, transaction_id, requests: [], message: 'No requests found' });
+        }
+        // แปลงวันเวลาเป็น Timezone ที่ต้องการ
+        const formattedRequests = requests.map(request => ({
+            ...request,
+            loan_date: moment.utc(request.loan_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
+            due_date: moment.utc(request.due_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss')
+        }));
+
+        res.status(200).json({ user_id, transaction_id, requests: formattedRequests });
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error fetching requests' });
+    }
+});
 
 
 

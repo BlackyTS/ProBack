@@ -16,7 +16,7 @@ const getLoanDetails = async () => {
             SELECT user_id, due_date 
             FROM transaction
             WHERE return_date IS NULL AND due_date >= CURRENT_DATE
-            AND loan_status NOT IN ('deny', 'cancel')
+            AND loan_status NOT IN ('deny', 'cancel', 'pending')
         `);
     } catch (error) {
         console.error('Error fetching loan details:', error);

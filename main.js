@@ -106,6 +106,7 @@ app.post('/register', async (req, res) => {
 app.get('/', (req,res)=> {
     res.send('Welocome to Back-end')
 })
+
 // Login
 app.post('/login', (req, res) => {
     const { email, password } = req.body;
@@ -203,7 +204,7 @@ app.post('/devices/add', authenticateToken, async (req, res) => {
 });
 
 /// เช็คชุดอุปกรณ์ที่เพิ่มมาทั้งหมด
-app.get('/devices', authenticateToken, async (req, res) => {
+app.get('/devices',  async (req, res) => {
     try {
         const device = await db.any('SELECT * FROM device');
         res.status(200).json(device);

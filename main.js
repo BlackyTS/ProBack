@@ -104,7 +104,7 @@ app.post('/register', async (req, res) => {
     }
 });
 app.get('/', (req,res)=> {
-    res.send('Welocome to Back-end')
+    res.send('Welcome to Back-end')
 })
 
 // Login

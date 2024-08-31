@@ -1,0 +1,106 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model device {
+  device_id           Int           @id(map: "devices_pkey") @default(autoincrement())
+  device_name         String        @db.VarChar(255)
+  device_description  String?
+  device_availability Int?
+  device_limit        Int?
+  device_approve      Boolean?      @default(true)
+  device_serial       String?
+  device_item         device_item[]
+  loan_detail         loan_detail[]
+}
+
+model device_item {
+  item_id           Int             @id @default(autoincrement())
+  device_id         Int
+  item_name         String          @db.VarChar(255)
+  item_description  String?
+  item_availability String          @db.VarChar(255)
+  item_loaning      Boolean?        @default(false)
+  item_serial       String?         @db.VarChar(255)
+  item_qrcode       String?         @db.VarChar
+  device            device          @relation(fields: [device_id], references: [device_id], onDelete: NoAction, onUpdate: NoAction, map: "device_id_FK")
+  loan_detail       loan_detail[]
+  return_detail     return_detail[]
+}
+
+model loan_detail {
+  loan_id                  Int          @id(map: "request_pkey") @default(autoincrement())
+  user_id                  Int?
+  item_id                  Int?
+  loan_status              String?      @db.VarChar(50)
+  loan_date                DateTime?    @default(now()) @db.Timestamptz(6)
+  due_date                 DateTime?    @default(now()) @db.Timestamptz(6)
+  item_availability_status String?      @db.VarChar(50)
+  admin_comment            String?
+  location_to_loan         String?
+  return_date              DateTime?    @db.Timestamptz(6)
+  device_id                Int?
+  transaction_id           Int?
+  cancelable_until         DateTime?    @db.Timestamptz(6)
+  device                   device?      @relation(fields: [device_id], references: [device_id], onDelete: NoAction, onUpdate: NoAction, map: "device_id_FK")
+  device_item              device_item? @relation(fields: [item_id], references: [item_id], onDelete: NoAction, onUpdate: NoAction, map: "item_id_FK")
+  transaction              transaction? @relation(fields: [transaction_id], references: [transaction_id], onDelete: NoAction, onUpdate: NoAction, map: "transaction_id_FK")
+  users                    users?       @relation(fields: [user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction, map: "user_id_FK")
+}
+
+model return_detail {
+  return_id          Int          @id @default(autoincrement())
+  item_id            Int?
+  user_id            Int?
+  return_date        DateTime?    @default(now()) @db.Timestamptz(6)
+  location_to_return String?
+  return_status      String?      @db.VarChar(50)
+  return_comment     String?
+  device_photo       String?
+  transaction_id     Int?
+  device_item        device_item? @relation(fields: [item_id], references: [item_id], onDelete: NoAction, onUpdate: NoAction, map: "item_id_FK")
+  transaction        transaction? @relation(fields: [transaction_id], references: [transaction_id], onDelete: NoAction, onUpdate: NoAction, map: "transaction_id")
+  users              users?       @relation(fields: [user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction, map: "user_id_FK")
+
+  @@unique([transaction_id, item_id], map: "unique_transaction_item")
+}
+
+model room {
+  room_id           String   @id @db.VarChar(255)
+  device_id         Int?
+  room_availability Boolean? @default(true)
+}
+
+model transaction {
+  transaction_id     Int             @id @default(autoincrement())
+  user_id            Int
+  loan_date          DateTime?       @default(now()) @db.Timestamptz(6)
+  return_date        DateTime?       @db.Timestamptz(6)
+  due_date           DateTime        @default(now()) @db.Timestamptz(6)
+  item_quantity      Int
+  comment            String?
+  device_photo       String?
+  loan_status        String?         @db.VarChar(255)
+  transaction_qrcode String?
+  loan_detail        loan_detail[]
+  return_detail      return_detail[]
+  users              users           @relation(fields: [user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction, map: "user_id_FK")
+}
+
+model users {
+  user_id        Int             @id @default(autoincrement())
+  user_firstname String?         @db.VarChar(255)
+  user_lastname  String?         @db.VarChar(255)
+  user_email     String?         @db.VarChar(255)
+  user_password  String?         @db.VarChar(255)
+  user_role      Int?            @default(1)
+  user_phone     String?         @db.VarChar(50)
+  loan_detail    loan_detail[]
+  return_detail  return_detail[]
+  transaction    transaction[]
+}

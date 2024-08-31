@@ -14,6 +14,10 @@ const QRCode = require('qrcode')
 const cron = require('node-cron')
 const moment = require('moment-timezone')
 const fetch = require('node-fetch')
+const ExcelJS = require('exceljs');
+const { PrismaClient } = require('@prisma/client')
+
+const prisma = new PrismaClient()
 
 require('dotenv').config()
 
@@ -74,23 +78,44 @@ const authenticateToken = (req, res, next) => {
 app.post('/register', async (req, res) => {
     const { email, password, firstname, lastname } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
+    console.log(req.body)
 
     try {
-        const result = await db.one('SELECT COALESCE(MAX(user_id), 0) AS max_id FROM users');
-        const nextId = result.max_id + 1;
+        //const existingUser = await db.oneOrNone('SELECT * FROM users WHERE user_email = $1', [email]);
+        const maxIdResult = await prisma.users.aggregate({
+            _max: {
+                user_id: true
+            }
+        });
+        const maxId = maxIdResult._max.id || 0;
+        const nextId = maxId + 1;
+        const existingUser = await prisma.users.findMany({
+            where: { user_email: email }
+        });
 
-        const existingUser = await db.oneOrNone('SELECT * FROM users WHERE user_email = $1', [email]);
-        if (existingUser) {
+        if (existingUser.length != 0) {
             return res.status(400).json({ message: 'Email already in use' });
         }
-        await db.none(
-            'INSERT INTO users(user_id, user_email, user_password, user_firstname, user_lastname) VALUES($1, $2, $3, $4, $5)',
-            [nextId, email, hashedPassword, firstname, lastname]
-        );
+        
+        // await db.none(
+        //     'INSERT INTO users(user_id, user_email, user_password, user_firstname, user_lastname) VALUES($1, $2, $3, $4, $5)',
+        //     [nextId, email, hashedPassword, firstname, lastname]
+        // );
+        const newUser = await prisma.users.create({
+            data: {
+                user_id: nextId,
+                user_email: email,
+                user_password: hashedPassword,
+                user_firstname: firstname,
+                user_lastname: lastname
+            }
+        });
+
        
         res.status(200).json({ 
             message: 'User registered successfully',
-            type: "ok"
+            type: "ok",
+            data: (newUser)
          });
     } catch (error) {
         console.error('ERROR:', error);
@@ -1091,7 +1116,7 @@ app.get('/return-data', async (req, res) => {
         }
 
         // เรียกฟังก์ชัน POST '/return' ด้วยข้อมูลจาก QR code
-        const response = await fetch('https://d876-2001-fb1-10b-d0e-54c7-f338-daa1-c447.ngrok-free.app/return-qr', { // เปลี่ยน URL ให้ตรงกับเส้นทางที่ต้องการเรียก
+        const response = await fetch('https://079c-2001-fb1-10b-d0e-d489-ee88-a2b4-bc6b.ngrok-free.app/return-qr', { // เปลี่ยน URL ให้ตรงกับเส้นทางที่ต้องการเรียก
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -1408,13 +1433,161 @@ app.get('/user/loan_detail/:user_id/:transaction_id', authenticateToken, async (
         res.status(500).json({ message: 'Error fetching requests' });
     }
 });
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ดูสถิติการยืมทั้งหมด
+app.get('/admin/summary_report', authenticateToken, async (req, res) => {
+    try {
+        // สร้างรายงานโดยใช้ SQL CTEs (Common Table Expressions)
+        const summary = await db.one(`
+            WITH borrowed AS (
+                SELECT COALESCE(COUNT(*), 0) AS total_borrowed
+                FROM loan_detail
+                WHERE loan_status = 'borrowed'
+            ),
+            returned AS (
+                SELECT COALESCE(COUNT(*), 0) AS total_returned
+                FROM loan_detail
+                WHERE loan_status = 'complete'
+            ),
+            total_transactions AS (
+                SELECT COALESCE(COUNT(DISTINCT transaction_id), 0) AS total_transactions
+                FROM loan_detail
+            ),
+            lost_or_broken AS (
+                SELECT COALESCE(SUM(total_lost_broken), 0) AS total_lost_broken
+                FROM (
+                    SELECT COUNT(*) AS total_lost_broken
+                    FROM device_item
+                    WHERE item_availability = 'broken'
+                    UNION ALL
+                    SELECT COUNT(*) AS total_lost_broken
+                    FROM loan_detail l
+                    JOIN device_item di ON l.item_id = di.item_id
+                    WHERE di.item_availability = 'disappear'
+                ) AS combined
+            ),
+            available AS (
+                SELECT COALESCE(COUNT(*), 0) AS total_available
+                FROM device_item
+                WHERE item_availability = 'ready'
+            ),
+            most_borrowed AS (
+                SELECT di.item_name, COUNT(l.item_id) AS borrow_count
+                FROM loan_detail l
+                JOIN device_item di ON l.item_id = di.item_id
+                GROUP BY di.item_name
+                ORDER BY borrow_count DESC
+                LIMIT 10
+            )
+            SELECT 
+                COALESCE((SELECT total_borrowed FROM borrowed), 0) AS total_borrowed,
+                COALESCE((SELECT total_returned FROM returned), 0) AS total_returned,
+                COALESCE((SELECT total_transactions FROM total_transactions), 0) AS total_transactions,
+                COALESCE((SELECT total_lost_broken FROM lost_or_broken), 0) AS total_lost_broken,
+                COALESCE((SELECT total_available FROM available), 0) AS total_available,
+                json_agg(json_build_object('item_name', item_name, 'borrow_count', borrow_count)) AS most_borrowed_items
+            FROM most_borrowed;
+        `);
 
+        res.status(200).json(summary);
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error generating report' });
+    }
+});
 
+// report แบบ execl
+app.get('/report/excel', async (req, res) => {
+    try {
+        // สร้าง workbook ใหม่
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Device Report');
 
+        // ดึงข้อมูลจากฐานข้อมูล โดยเปลี่ยน item_name เป็น item_serial
+        const result = await db.any(`
+            WITH borrowed AS (
+                SELECT l.item_id, di.item_serial, l.loan_date
+                FROM loan_detail l
+                JOIN device_item di ON l.item_id = di.item_id
+                WHERE l.loan_status = 'borrowed'
+            ),
+            returned AS (
+                SELECT r.item_id, di.item_serial, r.return_date
+                FROM return_detail r
+                JOIN loan_detail l ON r.transaction_id = l.transaction_id
+                JOIN device_item di ON l.item_id = di.item_id
+            ),
+            lost_or_broken AS (
+                SELECT di.item_serial, 'broken' AS status
+                FROM device_item di
+                WHERE di.item_availability = 'broken'
+                UNION ALL
+                SELECT di.item_serial, 'disappear' AS status
+                FROM device_item di
+                WHERE di.item_availability = 'disappear'
+            ),
+            available AS (
+                SELECT di.item_serial
+                FROM device_item di
+                WHERE di.item_availability = 'ready'
+            )
+            SELECT 
+                'borrowed' AS section, borrowed.item_serial, borrowed.loan_date, NULL AS return_date, NULL AS status
+            FROM borrowed
+            UNION ALL
+            SELECT 
+                'returned' AS section, returned.item_serial, NULL AS loan_date, returned.return_date, NULL AS status
+            FROM returned
+            UNION ALL
+            SELECT 
+                'lost or broken' AS section, lost_or_broken.item_serial, NULL AS loan_date, NULL AS return_date, lost_or_broken.status
+            FROM lost_or_broken
+            UNION ALL
+            SELECT 
+                'available' AS section, available.item_serial, NULL AS loan_date, NULL AS return_date, NULL AS status
+            FROM available
+        `);
 
+        // กำหนดคอลัมน์ โดยเปลี่ยนให้แสดง Item Serial
+        worksheet.columns = [
+            { header: 'Section', key: 'section', width: 20 },
+            { header: 'Item Serial', key: 'item_serial', width: 30 },
+            { header: 'Loan Date', key: 'loan_date', width: 20 },
+            { header: 'Return Date', key: 'return_date', width: 20 },
+            { header: 'Status', key: 'status', width: 20 }
+        ];
 
+        // จัดการข้อมูลตามประเภท
+        let currentSection = '';
+        result.forEach(row => {
+            if (row.section !== currentSection) {
+                currentSection = row.section;
 
+                // เพิ่มหัวข้อสำหรับแต่ละ section
+                worksheet.addRow([currentSection]).font = { bold: true };
+            }
+            // เพิ่มข้อมูลของแต่ละ section
+            worksheet.addRow(row);
+        });
 
+        // สร้าง path สำหรับบันทึกไฟล์ Excel
+        const filePath = path.join(__dirname, 'report', 'report.xlsx');
+
+        // ตรวจสอบว่ามีโฟลเดอร์ report หรือไม่ ถ้าไม่มีก็สร้าง
+        if (!fs.existsSync(path.join(__dirname, 'report'))) {
+            fs.mkdirSync(path.join(__dirname, 'report'));
+        }
+
+        // บันทึกไฟล์ Excel ลงในโฟลเดอร์ report
+        await workbook.xlsx.writeFile(filePath);
+
+        // ส่งกลับการตอบสนองว่าไฟล์ถูกสร้างแล้ว
+        res.status(200).json({ message: 'Report saved to /report/report.xlsx' });
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
 
 
 

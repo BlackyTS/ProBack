@@ -37,3 +37,4 @@ next-env.d.ts
 
 # Ignore environment variable files
 .env
+report/~$*.xlsx

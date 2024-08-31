@@ -1,0 +1,11 @@
+# Exported from Render on 2024-08-29T18:54:55Z
+services:
+- type: web
+  name: ProBack
+  runtime: node
+  repo: https://github.com/BlackyTS/ProBack
+  plan: free
+  region: oregon
+  buildCommand: npm install
+  startCommand: npm run dev
+version: "1"

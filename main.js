@@ -15,9 +15,9 @@ const cron = require('node-cron')
 const moment = require('moment-timezone')
 const fetch = require('node-fetch')
 const ExcelJS = require('exceljs');
-const { PrismaClient } = require('@prisma/client')
+// const { PrismaClient } = require('@prisma/client')
 
-const prisma = new PrismaClient()
+// const prisma = new PrismaClient()
 
 require('dotenv').config()
 
@@ -27,6 +27,7 @@ const corsOptions = {
     optionsSuccessStatus: 200
 }
 
+app.use(express.urlencoded({ extended: true }));
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(bodyParser.json());
@@ -79,38 +80,18 @@ app.post('/register', async (req, res) => {
     const { email, password, firstname, lastname } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
     console.log(req.body)
-
     try {
-        //const existingUser = await db.oneOrNone('SELECT * FROM users WHERE user_email = $1', [email]);
-        const maxIdResult = await prisma.users.aggregate({
-            _max: {
-                user_id: true
-            }
-        });
-        const maxId = maxIdResult._max.id || 0;
-        const nextId = maxId + 1;
-        const existingUser = await prisma.users.findMany({
-            where: { user_email: email }
-        });
+        const result = await db.one('SELECT COALESCE(MAX(user_id), 0) AS max_id FROM users');
+        const nextId = result.max_id + 1;
+        const existingUser = await db.oneOrNone('SELECT * FROM users WHERE user_email = $1', [email]);
 
-        if (existingUser.length != 0) {
+        if (existingUser) {
             return res.status(400).json({ message: 'Email already in use' });
         }
-        
-        // await db.none(
-        //     'INSERT INTO users(user_id, user_email, user_password, user_firstname, user_lastname) VALUES($1, $2, $3, $4, $5)',
-        //     [nextId, email, hashedPassword, firstname, lastname]
-        // );
-        const newUser = await prisma.users.create({
-            data: {
-                user_id: nextId,
-                user_email: email,
-                user_password: hashedPassword,
-                user_firstname: firstname,
-                user_lastname: lastname
-            }
-        });
-
+        await db.none(
+            'INSERT INTO users(user_id, user_email, user_password, user_firstname, user_lastname) VALUES($1, $2, $3, $4, $5)',
+            [nextId, email, hashedPassword, firstname, lastname]
+        );
        
         res.status(200).json({ 
             message: 'User registered successfully',
@@ -1497,97 +1478,7 @@ app.get('/admin/summary_report', authenticateToken, async (req, res) => {
 });
 
 // report แบบ execl
-app.get('/report/excel', async (req, res) => {
-    try {
-        // สร้าง workbook ใหม่
-        const workbook = new ExcelJS.Workbook();
-        const worksheet = workbook.addWorksheet('Device Report');
 
-        // ดึงข้อมูลจากฐานข้อมูล โดยเปลี่ยน item_name เป็น item_serial
-        const result = await db.any(`
-            WITH borrowed AS (
-                SELECT l.item_id, di.item_serial, l.loan_date
-                FROM loan_detail l
-                JOIN device_item di ON l.item_id = di.item_id
-                WHERE l.loan_status = 'borrowed'
-            ),
-            returned AS (
-                SELECT r.item_id, di.item_serial, r.return_date
-                FROM return_detail r
-                JOIN loan_detail l ON r.transaction_id = l.transaction_id
-                JOIN device_item di ON l.item_id = di.item_id
-            ),
-            lost_or_broken AS (
-                SELECT di.item_serial, 'broken' AS status
-                FROM device_item di
-                WHERE di.item_availability = 'broken'
-                UNION ALL
-                SELECT di.item_serial, 'disappear' AS status
-                FROM device_item di
-                WHERE di.item_availability = 'disappear'
-            ),
-            available AS (
-                SELECT di.item_serial
-                FROM device_item di
-                WHERE di.item_availability = 'ready'
-            )
-            SELECT 
-                'borrowed' AS section, borrowed.item_serial, borrowed.loan_date, NULL AS return_date, NULL AS status
-            FROM borrowed
-            UNION ALL
-            SELECT 
-                'returned' AS section, returned.item_serial, NULL AS loan_date, returned.return_date, NULL AS status
-            FROM returned
-            UNION ALL
-            SELECT 
-                'lost or broken' AS section, lost_or_broken.item_serial, NULL AS loan_date, NULL AS return_date, lost_or_broken.status
-            FROM lost_or_broken
-            UNION ALL
-            SELECT 
-                'available' AS section, available.item_serial, NULL AS loan_date, NULL AS return_date, NULL AS status
-            FROM available
-        `);
-
-        // กำหนดคอลัมน์ โดยเปลี่ยนให้แสดง Item Serial
-        worksheet.columns = [
-            { header: 'Section', key: 'section', width: 20 },
-            { header: 'Item Serial', key: 'item_serial', width: 30 },
-            { header: 'Loan Date', key: 'loan_date', width: 20 },
-            { header: 'Return Date', key: 'return_date', width: 20 },
-            { header: 'Status', key: 'status', width: 20 }
-        ];
-
-        // จัดการข้อมูลตามประเภท
-        let currentSection = '';
-        result.forEach(row => {
-            if (row.section !== currentSection) {
-                currentSection = row.section;
-
-                // เพิ่มหัวข้อสำหรับแต่ละ section
-                worksheet.addRow([currentSection]).font = { bold: true };
-            }
-            // เพิ่มข้อมูลของแต่ละ section
-            worksheet.addRow(row);
-        });
-
-        // สร้าง path สำหรับบันทึกไฟล์ Excel
-        const filePath = path.join(__dirname, 'report', 'report.xlsx');
-
-        // ตรวจสอบว่ามีโฟลเดอร์ report หรือไม่ ถ้าไม่มีก็สร้าง
-        if (!fs.existsSync(path.join(__dirname, 'report'))) {
-            fs.mkdirSync(path.join(__dirname, 'report'));
-        }
-
-        // บันทึกไฟล์ Excel ลงในโฟลเดอร์ report
-        await workbook.xlsx.writeFile(filePath);
-
-        // ส่งกลับการตอบสนองว่าไฟล์ถูกสร้างแล้ว
-        res.status(200).json({ message: 'Report saved to /report/report.xlsx' });
-    } catch (error) {
-        console.error('ERROR:', error);
-        res.status(500).json({ message: 'Server error' });
-    }
-});
 
 
 

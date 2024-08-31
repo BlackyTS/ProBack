@@ -564,3 +564,93 @@
 //         res.status(500).json({ message: 'Error fetching return transactions' });
 //     }
 // });
+
+// app.post('/register', async (req, res) => {
+//     const { email, password, firstname, lastname } = req.body;
+//     const hashedPassword = await bcrypt.hash(password, 10);
+//     console.log(req.body)
+//     try {
+//         //const existingUser = await db.oneOrNone('SELECT * FROM users WHERE user_email = $1', [email]);
+//         const maxIdResult = await prisma.users.aggregate({
+//             _max: {
+//                 user_id: true
+//             }
+//         });
+//         const maxId = maxIdResult._max.id || 0;
+//         const nextId = maxId + 1;
+//         const existingUser = await prisma.users.findMany({
+//             where: { user_email: email }
+//         });
+
+//         if (existingUser.length != 0) {
+//             return res.status(400).json({ message: 'Email already in use' });
+//         }
+//         // await db.none(
+//         //     'INSERT INTO users(user_id, user_email, user_password, user_firstname, user_lastname) VALUES($1, $2, $3, $4, $5)',
+//         //     [nextId, email, hashedPassword, firstname, lastname]
+//         // );
+//         const newUser = await prisma.users.create({
+//             data: {
+//                 user_id: nextId,
+//                 user_email: email,
+//                 user_password: hashedPassword,
+//                 user_firstname: firstname,
+//                 user_lastname: lastname
+//             }
+//         });
+//         res.status(200).json({ 
+//             message: 'User registered successfully',
+//             type: "ok",
+//             data: (newUser)
+//          });
+//     } catch (error) {
+//         console.error('ERROR:', error);
+//         res.status(500).json({ massge : 'Error registering user'});
+//     }
+// });
+
+// // Login
+// app.post('/login', async (req, res) => {
+//     const { email, password } = req.body;
+//     console.log(req.body);
+
+//     try {
+//         // ค้นหาผู้ใช้จากอีเมล
+//         const user = await prisma.users.findFirst({
+//             where: { user_email: email }
+//         });
+
+//         if (!user) {
+//             return res.status(400).json({ message: 'Invalid email or password' });
+//         }
+
+//         // ตรวจสอบรหัสผ่าน
+//         const match = await bcrypt.compare(password, user.user_password);
+//         if (match) {
+//             // สร้าง JWT token
+//             const token = generateToken(user);
+
+//             // ตั้งค่า cookie สำหรับ JWT token
+//             res.cookie('token', token, { 
+//                 maxAge: 72 * 60 * 60 * 1000, // 72 ชั่วโมง
+//                 httpOnly: true, 
+//                 secure: true, 
+//                 sameSite: 'none' 
+//             });
+
+//             res.status(200).json({ 
+//                 type: "ok",
+//                 message: 'Logged in successfully',
+//                 role: user.user_role
+//             });
+//         } else {
+//             res.status(400).json({ 
+//                 type: "no",
+//                 message: 'Invalid email or password' 
+//             });
+//         }
+//     } catch (error) {
+//         console.error('ERROR:', error);
+//         res.status(500).json({ message: 'Server error' });
+//     }
+// });

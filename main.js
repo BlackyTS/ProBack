@@ -1,4 +1,3 @@
-const pgp = require('pg-promise')()
 const express = require('express')
 const app = express()
 const bcrypt = require('bcrypt')
@@ -9,14 +8,13 @@ const cors = require('cors')
 const multer = require('multer')
 const path = require('path')
 const fs = require('fs')
-const axios = require('axios')
 const QRCode = require('qrcode')
 const cron = require('node-cron')
 const moment = require('moment-timezone')
 const fetch = require('node-fetch')
 const ExcelJS = require('exceljs');
+const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
 // const { PrismaClient } = require('@prisma/client')
-
 // const prisma = new PrismaClient()
 
 require('dotenv').config()
@@ -36,7 +34,7 @@ app.use(cookieParser());
 const secret = process.env.JWT_SECRET;
 
 const port = 8000
-const { db } = require('./Config/db');
+const { db } = require('./Config/db')
 
 app.use(cookieParser());
 
@@ -47,7 +45,7 @@ const storage = multer.diskStorage({
     },
     filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + path.extname(file.originalname);
-        cb(null, uniqueSuffix); // ตั้งชื่อไฟล์โดยใช้เวลาปัจจุบัน
+        cb(null, uniqueSuffix); 
     }
 });
 const upload = multer({ storage: storage });
@@ -75,9 +73,13 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
+app.get('/', (req,res)=> {
+    res.send('Welcome to Back-end')
+})
+
 // Register
 app.post('/register', async (req, res) => {
-    const { email, password, firstname, lastname } = req.body;
+    const { email, password, firstname, lastname, phone } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
     console.log(req.body)
     try {
@@ -89,24 +91,19 @@ app.post('/register', async (req, res) => {
             return res.status(400).json({ message: 'Email already in use' });
         }
         await db.none(
-            'INSERT INTO users(user_id, user_email, user_password, user_firstname, user_lastname) VALUES($1, $2, $3, $4, $5)',
-            [nextId, email, hashedPassword, firstname, lastname]
+            'INSERT INTO users( user_email, user_password, user_firstname, user_lastname, user_phone) VALUES($1, $2, $3, $4, $5)',
+            [email, hashedPassword, firstname, lastname, phone]
         );
        
         res.status(200).json({ 
             message: 'User registered successfully',
-            type: "ok",
-            data: (newUser)
+            type: "ok"
          });
     } catch (error) {
         console.error('ERROR:', error);
         res.status(500).json({ massge : 'Error registering user'});
     }
 });
-app.get('/', (req,res)=> {
-    res.send('Welcome to Back-end')
-})
-
 // Login
 app.post('/login', (req, res) => {
     const { email, password } = req.body;
@@ -137,7 +134,6 @@ app.post('/login', (req, res) => {
             res.status(500).json({ message: 'Server error' });
         });
 });
-
 // Logout
 app.post('/logout', authenticateToken, (req, res) => {
     res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none' }); 
@@ -146,7 +142,7 @@ app.post('/logout', authenticateToken, (req, res) => {
         type: "ok"
     });
 });
-
+// Delete User
 app.delete('/delete', authenticateToken, async (req, res) => {
     const { id } = req.body;
     try {
@@ -499,13 +495,14 @@ app.get('/admin/loan_detail/pending', authenticateToken, async (req, res) => {
 app.get('/admin/loan_detail/approve', authenticateToken, async (req, res) => {
     try {
         const requests = await db.any(`
-            SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, t.loan_date, t.due_date, t.item_quantity, ld.loan_status, ld.item_id
+            SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, u.user_phone, t.loan_date, t.due_date, t.item_quantity, ld.loan_status, ld.item_id
             FROM transaction t
             JOIN users u ON t.user_id = u.user_id
             LEFT JOIN loan_detail ld ON t.transaction_id = ld.transaction_id
             WHERE ld.loan_status = 'approve'
             ORDER BY t.loan_date DESC;
         `);
+
         // Group the results by user_id and transaction_id and aggregate item_ids
         const groupedRequests = requests.reduce((acc, curr) => {
             const existingRequest = acc.find(req => req.user_id == curr.user_id && req.transaction_id == curr.transaction_id);
@@ -518,6 +515,7 @@ app.get('/admin/loan_detail/approve', authenticateToken, async (req, res) => {
                     transaction_id: curr.transaction_id,
                     user_firstname: curr.user_firstname,
                     user_email: curr.user_email,
+                    user_phone: curr.user_phone, // Add user_phone
                     loan_date: moment.utc(curr.loan_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
                     due_date: moment.utc(curr.due_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
                     item_quantity: curr.item_quantity,
@@ -536,6 +534,7 @@ app.get('/admin/loan_detail/approve', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Error fetching transactions' });
     }
 });
+
 // ดูคำร้องปฏิเสธ deny
 app.get('/admin/loan_detail/deny', authenticateToken, async (req, res) => {
     try {
@@ -1214,7 +1213,6 @@ app.post('/scan-item', async (req, res) => {
                      WHERE transaction_id = $2 AND item_id = $3`,
                     [returnDate, transaction_id, item_id]
                 );                
-
                 // อัปเดต device_item
                 await t.none(
                     `UPDATE device_item 
@@ -1222,7 +1220,6 @@ app.post('/scan-item', async (req, res) => {
                      WHERE item_id = $1`,
                     [item_id]
                 );
-
                 // แทรกหรืออัปเดต return_detail โดยใช้ RETURNING เพื่อจัดการกับค่า return_id
                 await t.none(
                     `INSERT INTO return_detail (user_id, item_id, return_status, return_date, transaction_id)
@@ -1238,7 +1235,6 @@ app.post('/scan-item', async (req, res) => {
                      WHERE return_detail.transaction_id = EXCLUDED.transaction_id AND return_detail.item_id = EXCLUDED.item_id`,
                     [transaction_id, item_id, returnDate]
                 );
-
                 // เพิ่มค่า device_availability ตามจำนวนที่คืน
                 await t.none(
                     `UPDATE device 
@@ -1481,7 +1477,214 @@ app.get('/admin/summary_report', authenticateToken, async (req, res) => {
 });
 
 // report แบบ execl
+// ทดสอบการเชื่อมต่อฐานข้อมูล
+async function testDatabase() {
+    try {
+        const result = await db.query('SELECT NOW()');
+        if (result && result.length > 0) {
+            console.log('Database connected successfully:', result[0].now);
+        } else {
+            console.log('Database connection result is empty.');
+        }
+    } catch (error) {
+        console.error('Database connection error:', error);
+    }
+}
 
+// ฟังก์ชันดึงข้อมูลรายการยืม-คืน
+async function getLoanReturnData() {
+    try {
+        const result = await db.query(`
+            SELECT
+                ROW_NUMBER() OVER (ORDER BY ld.transaction_id) AS transaction_id,
+                ld.user_id,
+                ld.loan_date,
+                ld.return_date,
+                COUNT(di.item_id) AS item_quantity,
+                STRING_AGG(di.item_serial, ', ') AS device_serial,
+                ld.loan_status AS transaction_status
+            FROM loan_detail ld
+            JOIN device_item di ON ld.item_id = di.item_id
+            GROUP BY ld.transaction_id, ld.user_id, ld.loan_date, ld.return_date, ld.loan_status
+            ORDER BY transaction_id
+        `);
+        if (result && result.length > 0) {
+            console.log('Loan Return Query Result:', result);
+            return result;
+        } else {
+            console.log('No loan/return data found.');
+            return [];
+        }
+    } catch (error) {
+        console.error('Error fetching loan/return data:', error);
+        throw error;
+    }
+}
+
+// ฟังก์ชันดึงข้อมูลอุปกรณ์ทั้งหมด
+async function getDeviceData() {
+    try {
+        const result = await db.query(`
+            SELECT
+                item_serial,
+                item_availability
+            FROM device_item
+        `);
+        if (result && result.length > 0) {
+            console.log('Device Data Query Result:', result);
+            return result;
+        } else {
+            console.log('No device data found.');
+            return [];
+        }
+    } catch (error) {
+        console.error('Error fetching device data:', error);
+        throw error;
+    }
+}
+
+// ฟังก์ชันดึงข้อมูลสรุปยอดรวม
+async function getDeviceSummary() {
+    try {
+        const result = await db.query(`
+            SELECT
+                COUNT(*) AS total_items,
+                SUM(CASE WHEN item_availability = 'ready' THEN 1 ELSE 0 END) AS ready,
+                SUM(CASE WHEN item_availability = 'broken' THEN 1 ELSE 0 END) AS broken,
+                SUM(CASE WHEN item_availability = 'lost' THEN 1 ELSE 0 END) AS lost
+            FROM device_item
+        `);
+        if (result && result.length > 0) {
+            console.log('Device Summary Query Result:', result[0]);
+            return result[0];
+        } else {
+            console.log('No device summary data found.');
+            return {};
+        }
+    } catch (error) {
+        console.error('Error fetching device summary:', error);
+        throw error;
+    }
+}
+
+async function generateReport() {
+    try {
+        const workbook = new ExcelJS.Workbook();
+
+        // หน้า 1: ข้อมูลรายการยืม-คืน
+        const worksheet1 = workbook.addWorksheet('Loan and Return Summary');
+        worksheet1.columns = [
+            { header: 'Transaction ID', key: 'transaction_id', width: 20 },
+            { header: 'User ID', key: 'user_id', width: 20 },
+            { header: 'Loan Date', key: 'loan_date', width: 20 },
+            { header: 'Return Date', key: 'return_date', width: 20 },
+            { header: 'Item Quantity', key: 'item_quantity', width: 15 },
+            { header: 'Transaction Status', key: 'transaction_status', width: 20 },
+            { header: 'Device Serial', key: 'device_serial', width: 110 }          
+        ];
+
+        worksheet1.getRow(1).font = { bold: true };
+        worksheet1.getRow(1).fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFD3D3D3' }
+        };
+
+        const loanReturnData = await getLoanReturnData();
+        console.log('Loan Return Data:', loanReturnData);
+
+        let totalItemQuantity = 0;
+        if (loanReturnData.length > 0) {
+            loanReturnData.forEach(record => {
+                worksheet1.addRow({
+                    transaction_id: record.transaction_id,
+                    user_id: record.user_id,
+                    loan_date: record.loan_date ? new Date(record.loan_date).toLocaleDateString('th-TH') : 'N/A',
+                    return_date: record.return_date ? new Date(record.return_date).toLocaleDateString('th-TH') : 'N/A',
+                    item_quantity: record.item_quantity,
+                    device_serial: record.device_serial,
+                    transaction_status: record.transaction_status
+                });
+                totalItemQuantity += parseInt(record.item_quantity) || 0;
+            });
+            worksheet1.addRow({
+                transaction_id: 'Total',
+                item_quantity: totalItemQuantity
+            }).font = { bold: true };
+        } else {
+            worksheet1.addRow(['No loan/return data available']);
+        }
+
+        // หน้า 2: ข้อมูลอุปกรณ์ทั้งหมด
+        const worksheet2 = workbook.addWorksheet('Device Information');
+        worksheet2.columns = [
+            { header: 'Item Serial', key: 'item_serial', width: 30 },
+            { header: 'Item Availability', key: 'item_availability', width: 20 }
+        ];
+
+        worksheet2.getRow(1).font = { bold: true };
+        worksheet2.getRow(1).fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFD3D3D3' }
+        };
+
+        const deviceData = await getDeviceData();
+        console.log('Device Data:', deviceData);
+
+        if (deviceData.length > 0) {
+            deviceData.forEach(record => {
+                worksheet2.addRow({
+                    item_serial: record.item_serial,
+                    item_availability: record.item_availability
+                });
+            });
+
+            const summary = await getDeviceSummary();
+            console.log('Device Summary:', summary);
+
+            worksheet2.addRow({ item_serial: 'Total Items', item_availability: summary.total_items }).font = { bold: true };
+            worksheet2.addRow({ item_serial: 'Total Ready', item_availability: summary.ready }).font = { bold: true };
+            worksheet2.addRow({ item_serial: 'Total Broken', item_availability: summary.broken }).font = { bold: true };
+            worksheet2.addRow({ item_serial: 'Total Lost', item_availability: summary.lost }).font = { bold: true };
+        } else {
+            worksheet2.addRow(['No device data available']);
+        }
+
+        const today = new Date();
+        const dateStr = today.toLocaleDateString('th-TH').split('/').join('-');
+        const fileName = `summary_report_${dateStr}.xlsx`;
+        const filePath = path.join(__dirname, 'report', fileName);
+
+        console.log('Saving file to:', filePath);
+
+        await workbook.xlsx.writeFile(filePath);
+        console.log('File saved successfully');
+
+        return filePath;
+
+    } catch (error) {
+        console.error('Error generating report:', error);
+        throw error;
+    }
+}
+// Route สำหรับดาวน์โหลดรายงาน
+app.get('/report/download', async (req, res) => {
+    try {
+        await testDatabase(); // ทดสอบการเชื่อมต่อฐานข้อมูล
+
+        const filePath = await generateReport();
+        res.download(filePath, err => {
+            if (err) {
+                console.error('Error downloading file:', err);
+                res.status(500).send('Failed to download file.');
+            }
+        });
+    } catch (error) {
+        console.error('Failed to generate report:', error);
+        res.status(500).send('Failed to generate report.');
+    }
+});
 
 
 
@@ -1511,27 +1714,93 @@ app.get('/dashboard', authenticateToken, async (req, res) => {
         const totalUsers = await db.one('SELECT COUNT(user_id) AS total_users FROM users');
         // ดึงจำนวนอุปกรณ์ทั้งหมด
         const totalDevices = await db.one('SELECT COUNT(item_id) AS total_devices FROM device_item');
-        // ดึงข้อมูลการยืมอุปกรณ์
-        // const loanDetails = await db.any(`
-        //     SELECT device_name, COUNT(loan_detail.device_id) AS borrow_count
-        //     FROM loan_detail
-        //     JOIN device_items ON loan_detail.device_id = device_items.item_id
-        //     GROUP BY device_name
-        //     ORDER BY borrow_count DESC
-        //     LIMIT 10
-        // `);
+        // ดึงจำนวนรายการการยืมที่กำลังดำเนินการอยู่
+        const totalTransactions = await db.one(`
+            SELECT COUNT(loan_id) AS total_transactions
+            FROM loan_detail
+            WHERE loan_status = 'borrowed' OR loan_status = 'pending' OR loan_status = 'approve'
+        `);
+
+        // ดึงข้อมูลการจัดอันดับชุดอุปกรณ์ที่ยืมมากที่สุดจากประวัติทั้งหมด
+        const topDevices = await db.any(`
+            WITH most_borrowed AS (
+                SELECT di.item_name, COUNT(l.item_id) AS borrow_count
+                FROM loan_detail l
+                JOIN device_item di ON l.item_id = di.item_id
+                GROUP BY di.item_name
+                ORDER BY borrow_count DESC
+            )
+            SELECT * FROM most_borrowed
+        `);
 
         // ส่งข้อมูลกลับ
         res.status(200).json({
             total_users: totalUsers.total_users,
             total_devices: totalDevices.total_devices,
-            // loan_details: loanDetails
+            total_transactions: totalTransactions.total_transactions,
+            top_devices: topDevices // ข้อมูลการจัดอันดับชุดอุปกรณ์ที่ยืมมากที่สุดจากประวัติทั้งหมด
         });
     } catch (error) {
         console.error('Error fetching dashboard data:', error);
         res.status(500).send({ message: 'Error fetching dashboard data' });
     }
 });
+
+const width = 800; // กว้างของกราฟ
+const height = 600; // สูงของกราฟ
+const chartJSNodeCanvas = new ChartJSNodeCanvas({ width, height });
+app.get('/generate-chart', async (req, res) => {
+    try {
+        // ดึงข้อมูลการจัดอันดับชุดอุปกรณ์ที่ยืมมากที่สุดจากประวัติทั้งหมด
+        const topDevices = await db.any(`
+            WITH most_borrowed AS (
+                SELECT di.item_name, COUNT(l.item_id) AS borrow_count
+                FROM loan_detail l
+                JOIN device_item di ON l.item_id = di.item_id
+                GROUP BY di.item_name
+                ORDER BY borrow_count DESC
+            )
+            SELECT * FROM most_borrowed
+        `);
+
+        // ตรวจสอบข้อมูล
+        console.log('Top Devices:', topDevices);
+
+        const labels = topDevices.map(device => device.item_name);
+        const dataPoints = topDevices.map(device => device.borrow_count);
+
+        const configuration = {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Number of Borrows',
+                    data: dataPoints,
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        };
+
+        const image = await chartJSNodeCanvas.renderToBuffer(configuration);
+        res.set('Content-Type', 'image/png');
+        res.send(image);
+    } catch (error) {
+        console.error('Error generating chart:', error);
+        res.status(500).send('Error generating chart');
+    }
+});
+
+
+
 
 app.listen(port, () => {
     console.log(`Server is running on http://localhost:${port}`);

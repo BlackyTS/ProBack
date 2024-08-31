@@ -103,7 +103,9 @@ app.post('/register', async (req, res) => {
         res.status(500).json({ massge : 'Error registering user'});
     }
 });
-
+app.get('/', (req,res)=> {
+    res.send('Welocome to Back-end')
+})
 // Login
 app.post('/login', (req, res) => {
     const { email, password } = req.body;

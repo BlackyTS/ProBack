@@ -118,7 +118,8 @@ app.post('/login', (req, res) => {
                 res.status(200).json({ 
                     type: "ok",
                     message: 'Logged in successfully',
-                    role: user.user_role
+                    role: user.user_role,
+                    token: generateToken
                 });
             } else {
                 res.status(400).json({ 

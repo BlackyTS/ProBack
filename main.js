@@ -20,7 +20,7 @@ const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
 require('dotenv').config()
 
 const corsOptions = {
-    origin: '*',
+    origin: 'https://front-end-amber-eight.vercel.app',
     credentials: true,  
     optionsSuccessStatus: 200
 }
@@ -114,6 +114,7 @@ app.post('/login', (req, res) => {
             const match = await bcrypt.compare(password, user.user_password);
             if (match) {
                 const token = generateToken(user);
+                console.log(token)
                 res.cookie('token', token, { maxAge: 72*60*60*1000, httpOnly: true, secure: true, sameSite: 'none' });
                 res.status(200).json({ 
                     type: "ok",

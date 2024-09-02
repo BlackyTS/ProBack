@@ -20,7 +20,7 @@ const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
 require('dotenv').config()
 
 const corsOptions = {
-    origin: 'http://localhost:3000',
+    origin: '*',
     credentials: true,  
     optionsSuccessStatus: 200
 }
@@ -83,8 +83,6 @@ app.post('/register', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     console.log(req.body)
     try {
-        const result = await db.one('SELECT COALESCE(MAX(user_id), 0) AS max_id FROM users');
-        const nextId = result.max_id + 1;
         const existingUser = await db.oneOrNone('SELECT * FROM users WHERE user_email = $1', [email]);
 
         if (existingUser) {
@@ -1695,19 +1693,6 @@ app.get('/report/download', async (req, res) => {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 app.get('/dashboard', authenticateToken, async (req, res) => {
     try {
         // ดึงจำนวนผู้ใช้ทั้งหมด
@@ -1745,62 +1730,6 @@ app.get('/dashboard', authenticateToken, async (req, res) => {
         res.status(500).send({ message: 'Error fetching dashboard data' });
     }
 });
-
-const width = 800; // กว้างของกราฟ
-const height = 600; // สูงของกราฟ
-const chartJSNodeCanvas = new ChartJSNodeCanvas({ width, height });
-app.get('/generate-chart', async (req, res) => {
-    try {
-        // ดึงข้อมูลการจัดอันดับชุดอุปกรณ์ที่ยืมมากที่สุดจากประวัติทั้งหมด
-        const topDevices = await db.any(`
-            WITH most_borrowed AS (
-                SELECT di.item_name, COUNT(l.item_id) AS borrow_count
-                FROM loan_detail l
-                JOIN device_item di ON l.item_id = di.item_id
-                GROUP BY di.item_name
-                ORDER BY borrow_count DESC
-            )
-            SELECT * FROM most_borrowed
-        `);
-
-        // ตรวจสอบข้อมูล
-        console.log('Top Devices:', topDevices);
-
-        const labels = topDevices.map(device => device.item_name);
-        const dataPoints = topDevices.map(device => device.borrow_count);
-
-        const configuration = {
-            type: 'bar',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Number of Borrows',
-                    data: dataPoints,
-                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                    borderColor: 'rgba(75, 192, 192, 1)',
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                scales: {
-                    y: {
-                        beginAtZero: true
-                    }
-                }
-            }
-        };
-
-        const image = await chartJSNodeCanvas.renderToBuffer(configuration);
-        res.set('Content-Type', 'image/png');
-        res.send(image);
-    } catch (error) {
-        console.error('Error generating chart:', error);
-        res.status(500).send('Error generating chart');
-    }
-});
-
-
-
 
 app.listen(port, () => {
     console.log(`Server is running on http://localhost:${port}`);

@@ -654,3 +654,319 @@
 //         res.status(500).json({ message: 'Server error' });
 //     }
 // });
+
+
+//ยืมโดยไม่มี qrcode
+// app.post('/loan', authenticateToken, async (req, res) => {
+//     const { devices, due_date } = req.body;
+//     let itemAvailabilityStatus = 'ready';
+//     const loan_status = 'pending';
+//     if (loan_status == 'pending') {
+//         itemAvailabilityStatus = 'pending';
+//     }
+//     try {
+//         if (!Array.isArray(devices) || devices.length == 0) {
+//             return res.status(400).json({ message: 'Invalid selection. Please provide at least one device.' });
+//         }
+//         const user_id = req.user.id;
+//         console.log('User ID:', user_id);
+//         const loan_date = new Date();
+//         const cancelable_until = new Date(loan_date.getTime() + 12 * 60 * 60 * 1000); // 12 ชั่วโมงถัดไป
+        
+//         await db.tx(async t => {
+//             let totalItemQuantity = 0;
+
+//             // รับค่า transaction_id สูงสุดจากฐานข้อมูล
+//             const maxTransaction = await t.one('SELECT COALESCE(MAX(transaction_id), 0) AS max_id FROM transaction');
+//             const nextTransactionId = maxTransaction.max_id + 1;
+
+//             // สร้าง serial number สำหรับ transaction
+//             const serialNumber = `TRANS-${nextTransactionId}-${Date.now()}`;
+
+//             // สร้าง QR code สำหรับ transaction
+//             const qrCodeData = JSON.stringify({
+//                 transaction_id: nextTransactionId,
+//                 serial: serialNumber,
+//                 user_id: user_id,
+//                 loan_date: loan_date,
+//                 due_date: due_date
+//             });
+
+//             const qrCodeFileName = `transaction_${nextTransactionId}.png`;
+//             const qrCodePath = path.join(__dirname, 'transaction_qrcodes', qrCodeFileName);
+
+//             await QRCode.toFile(qrCodePath, qrCodeData);
+
+//             // บันทึกข้อมูลลงในตาราง transaction
+//             await t.none(
+//                 'INSERT INTO transaction(transaction_id, user_id, loan_date, due_date, item_quantity, loan_status, transaction_qrcode) VALUES($1, $2, $3, $4, $5, $6, $7)',
+//                 [nextTransactionId, user_id, loan_date, due_date, totalItemQuantity, loan_status, serialNumber]
+//             );
+
+//             // รับค่า loan_id สูงสุดจากฐานข้อมูล
+//             const maxLoan = await t.one('SELECT COALESCE(MAX(loan_id), 0) AS max_id FROM loan_detail');
+//             let nextLoanId = maxLoan.max_id + 1;
+
+//             for (const { device_id, quantity } of devices) {
+//                 if (!device_id || !quantity || quantity <= 0) {
+//                     throw new Error('Invalid device_id or quantity.');
+//                 }
+
+//                 const availableItems = await t.any(
+//                     'SELECT item_id FROM device_item WHERE device_id = $1 AND item_availability = $2 ORDER BY item_id ASC',
+//                     [device_id, 'ready']
+//                 );
+
+//                 if (availableItems.length < quantity) {
+//                     throw new Error(`Not enough items available for device_id ${device_id}.`);
+//                 }
+
+//                 const selectedItems = availableItems.slice(0, quantity);
+//                 totalItemQuantity += quantity;
+
+//                 for (const item of selectedItems) {
+//                     const item_id = item.item_id;
+
+//                     await t.none(
+//                         'INSERT INTO loan_detail(loan_id, user_id, item_id, loan_status, due_date, item_availability_status, device_id, loan_date, transaction_id, cancelable_until) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+//                         [nextLoanId, user_id, item_id, loan_status, due_date, itemAvailabilityStatus, device_id, loan_date, nextTransactionId, cancelable_until]
+//                     );
+
+//                     nextLoanId++;
+
+//                     if (loan_status == 'pending') {
+//                         await t.none(
+//                             'UPDATE device_item SET item_availability = $1 WHERE item_id = $2',
+//                             [itemAvailabilityStatus, item_id]
+//                         );
+//                     }
+//                 }
+
+//                 const updatedAvailability = await t.one(
+//                     'SELECT COUNT(*) AS ready_count FROM device_item WHERE device_id = $1 AND item_availability = $2',
+//                     [device_id, 'ready']
+//                 );
+
+//                 await t.none(
+//                     'UPDATE device SET device_availability = $1 WHERE device_id = $2',
+//                     [updatedAvailability.ready_count, device_id]
+//                 );
+//             }
+
+//             // อัปเดต item_quantity ในตาราง transaction
+//             await t.none(
+//                 'UPDATE transaction SET item_quantity = $1 WHERE transaction_id = $2',
+//                 [totalItemQuantity, nextTransactionId]
+//             );
+
+//             res.status(200).json({ message: 'Loan request processed successfully', transactionId: nextTransactionId, serialNumber: serialNumber });
+
+//             // ส่งการแจ้งเตือนผ่าน Line Notify
+//             const notifyMessage = `มีการขอยืมอุปกรณ์ใหม่แล้ว. User ID: ${user_id}, จำนวนรวม: ${totalItemQuantity}`;
+//             await sendLineNotify(notifyMessage);
+//         });
+//     } catch (error) {
+//         console.error('ERROR:', error);
+//         if (!res.headersSent) {
+//             res.status(500).json({ message: 'Error processing loan request' });
+//         }
+//     }
+// });
+
+// scan qrcode confirm loan
+// app.post('/loan', authenticateToken, async (req, res) => {
+//     const { devices, due_date } = req.body;
+//     let itemAvailabilityStatus = 'ready';
+//     const loan_status = 'pending';
+//     if (loan_status === 'pending') {
+//         itemAvailabilityStatus = 'pending';
+//     }
+
+//     try {
+//         if (!Array.isArray(devices) || devices.length === 0) {
+//             return res.status(400).json({ message: 'Invalid selection. Please provide at least one device.' });
+//         }
+
+//         const user_id = req.user.id;
+//         const loan_date = new Date();
+//         const cancelable_until = new Date(loan_date.getTime() + 12 * 60 * 60 * 1000); // 12 ชั่วโมงถัดไป
+
+//         await db.tx(async t => {
+//             let totalItemQuantity = 0;
+
+//             // รับค่า loan_id สูงสุดจากฐานข้อมูล
+//             const maxLoan = await t.one('SELECT COALESCE(MAX(loan_id), 0) AS max_id FROM loan_detail');
+//             let nextLoanId = maxLoan.max_id + 1;
+
+//             // สร้าง transaction_id สำหรับการยืม
+//             const maxTransaction = await t.one('SELECT COALESCE(MAX(transaction_id), 0) AS max_id FROM transaction');
+//             const nextTransactionId = maxTransaction.max_id + 1;
+//             const qrCodeData = JSON.stringify({ transaction_id: nextTransactionId });
+//             const qrCodeFileName = `transaction_${nextTransactionId}.png`;
+//             const qrCodePath = path.join(__dirname, 'transaction_qrcodes', qrCodeFileName);
+
+//             // สร้าง QR code สำหรับ transaction_id
+//             await QRCode.toFile(qrCodePath, qrCodeData);
+
+//             // บันทึกข้อมูล transaction ก่อนการบันทึก loan_detail
+//             await t.none(
+//                 'INSERT INTO transaction(transaction_id, user_id, loan_date, due_date, item_quantity, loan_status, transaction_qrcode) VALUES($1, $2, $3, $4, $5, $6, $7)',
+//                 [nextTransactionId, user_id, loan_date, due_date, 0, loan_status, qrCodeFileName] // item_quantity จะอัปเดตทีหลัง
+//             );
+
+//             for (const { device_id, quantity } of devices) {
+//                 if (!device_id || !quantity || quantity <= 0) {
+//                     throw new Error('Invalid device_id or quantity.');
+//                 }
+
+//                 const availableItems = await t.any(
+//                     'SELECT item_id FROM device_item WHERE device_id = $1 AND item_availability = $2 ORDER BY item_id ASC',
+//                     [device_id, 'ready']
+//                 );
+
+//                 if (availableItems.length < quantity) {
+//                     throw new Error(`Not enough items available for device_id ${device_id}.`);
+//                 }
+
+//                 const selectedItems = availableItems.slice(0, quantity);
+//                 totalItemQuantity += quantity;
+
+//                 for (const item of selectedItems) {
+//                     const item_id = item.item_id;
+
+//                     await t.none(
+//                         'INSERT INTO loan_detail(loan_id, user_id, item_id, loan_status, due_date, item_availability_status, device_id, loan_date, cancelable_until, transaction_id) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+//                         [nextLoanId, user_id, item_id, loan_status, due_date, itemAvailabilityStatus, device_id, loan_date, cancelable_until, nextTransactionId] // ใช้ nextTransactionId ที่ถูกบันทึกแล้ว
+//                     );
+
+//                     nextLoanId++;
+
+//                     if (loan_status === 'pending') {
+//                         await t.none(
+//                             'UPDATE device_item SET item_availability = $1 WHERE item_id = $2',
+//                             [itemAvailabilityStatus, item_id]
+//                         );
+//                     }
+//                 }
+
+//                 const updatedAvailability = await t.one(
+//                     'SELECT COUNT(*) AS ready_count FROM device_item WHERE device_id = $1 AND item_availability = $2',
+//                     [device_id, 'ready']
+//                 );
+
+//                 await t.none(
+//                     'UPDATE device SET device_availability = $1 WHERE device_id = $2',
+//                     [updatedAvailability.ready_count, device_id]
+//                 );
+//             }
+
+//             // อัปเดตจำนวนรวมของ item_quantity ในตาราง transaction
+//             await t.none(
+//                 'UPDATE transaction SET item_quantity = $1 WHERE transaction_id = $2',
+//                 [totalItemQuantity, nextTransactionId]
+//             );
+
+//             // ส่งการแจ้งเตือนผ่าน Line Notify
+//             const notifyMessage = `มีการขอยืมอุปกรณ์ใหม่แล้ว. User ID: ${user_id}, จำนวนรวม: ${totalItemQuantity}, QR Code: ${qrCodeFileName}`;
+//             await sendLineNotify(notifyMessage);
+            
+//             res.status(200).json({ 
+//                 message: 'Loan request processed successfully', 
+//                 totalItems: totalItemQuantity,
+//                 transactionId: nextTransactionId,
+//                 qrCodeFileName: qrCodeFileName
+//             });
+//         });
+//     } catch (error) {
+//         console.error('ERROR:', error);
+//         if (!res.headersSent) {
+//             res.status(500).json({ message: 'Error processing loan request' });
+//         }
+//     }
+// });
+
+// app.post('/confirm-loan', authenticateToken, async (req, res) => {
+//     const { transaction_id } = req.body;
+//     const user_id = req.user.id;
+//     console.log('Transaction ID received for confirmation:', transaction_id);
+//     console.log('User ID:', user_id);
+
+//     // ตรวจสอบว่ามี transaction_id นี้อยู่หรือไม่
+//     const loanDetail = await db.any(
+//         'SELECT * FROM loan_detail WHERE transaction_id = $1 AND user_id = $2',
+//         [transaction_id, user_id]
+//     );
+
+//     console.log('Loan Details:', loanDetail);
+
+//     if (loanDetail.length === 0) {
+//         return res.status(400).json({ 
+//             message: `No matching loan details found for Transaction ID: ${transaction_id}`
+//         });
+//     };
+
+//     try {
+//         // ตรวจสอบว่ามี transaction_id นี้อยู่ในฐานข้อมูลหรือไม่
+//         const transaction = await db.oneOrNone(
+//             'SELECT transaction_id FROM transaction WHERE transaction_id = $1',
+//             [transaction_id]
+//         );
+
+//         if (!transaction) {
+//             return res.status(400).json({ message: 'Invalid transaction ID' });
+//         }
+
+//         // ตรวจสอบข้อมูลใน loan_detail โดยใช้เพียง transaction_id ก่อน
+//         const loanDetails = await db.any(
+//             'SELECT * FROM loan_detail WHERE transaction_id = $1',
+//             [transaction_id]
+//         );
+
+//         console.log('Loan Details:', loanDetails); // แสดงข้อมูลใน console เพื่อตรวจสอบ
+
+//         // ตรวจสอบว่ามีข้อมูล loan_detail สำหรับ transaction_id หรือไม่
+//         if (loanDetails.length === 0) {
+//             return res.status(400).json({ message: 'No matching loan details found for this transaction ID' });
+//         }
+
+//         // ตรวจสอบว่ามีรายการที่ตรงกับ user_id หรือไม่
+//         const userLoanDetail = loanDetails.find(detail => detail.user_id === user_id);
+
+//         if (!userLoanDetail) {
+//             return res.status(400).json({ message: `No matching loan details found for Transaction ID: ${transaction_id} and User ID: ${user_id}` });
+//         }
+
+//         // อัปเดต loan_status และ transaction status
+//         await db.tx(async t => {
+//             const updateResult = await t.result(
+//                 'UPDATE loan_detail SET loan_status = $1, item_availability_status = $2 WHERE transaction_id = $3 AND user_id = $4',
+//                 ['approved', 'borrowed', transaction_id, user_id]
+//             );
+
+//             console.log('Update Result:', updateResult); // แสดงผลลัพธ์ของการอัปเดต
+
+//             if (updateResult.rowCount === 0) {
+//                 throw new Error('Failed to update loan status or no rows affected.');
+//             }
+
+//             for (const { item_id } of loanDetails) {
+//                 await t.none(
+//                     'UPDATE device_item SET item_availability = $1 WHERE item_id = $2',
+//                     ['borrowed', item_id]
+//                 );
+//             }
+
+//             await t.none(
+//                 'UPDATE transaction SET loan_status = $1 WHERE transaction_id = $2',
+//                 ['approve', transaction_id]
+//             );
+//         });
+
+//         res.status(200).json({ message: 'Loan confirmed and status updated successfully' });
+//     } catch (error) {
+//         console.error('ERROR:', error);
+//         if (!res.headersSent) {
+//             res.status(500).json({ message: 'Error confirming loan' });
+//         }
+//     }
+// });

@@ -719,18 +719,22 @@ app.post('/loan', authenticateToken, async (req, res) => {
     const { devices, due_date } = req.body;
     let itemAvailabilityStatus = 'ready';
     const loan_status = 'pending';
-    if (loan_status == 'pending') {
+
+    if (loan_status === 'pending') {
         itemAvailabilityStatus = 'pending';
     }
+
     try {
-        if (!Array.isArray(devices) || devices.length == 0) {
+        if (!Array.isArray(devices) || devices.length === 0) {
             return res.status(400).json({ message: 'Invalid selection. Please provide at least one device.' });
         }
+
         const user_id = req.user.id;
         console.log('User ID:', user_id);
+
         const loan_date = new Date();
         const cancelable_until = new Date(loan_date.getTime() + 12 * 60 * 60 * 1000); // 12 ชั่วโมงถัดไป
-        
+
         await db.tx(async t => {
             let totalItemQuantity = 0;
 
@@ -740,20 +744,6 @@ app.post('/loan', authenticateToken, async (req, res) => {
 
             // สร้าง serial number สำหรับ transaction
             const serialNumber = `TRANS-${nextTransactionId}-${Date.now()}`;
-
-            // สร้าง QR code สำหรับ transaction
-            const qrCodeData = JSON.stringify({
-                transaction_id: nextTransactionId,
-                serial: serialNumber,
-                user_id: user_id,
-                loan_date: loan_date,
-                due_date: due_date
-            });
-
-            const qrCodeFileName = `transaction_${nextTransactionId}.png`;
-            const qrCodePath = path.join(__dirname, 'transaction_qrcodes', qrCodeFileName);
-
-            await QRCode.toFile(qrCodePath, qrCodeData);
 
             // บันทึกข้อมูลลงในตาราง transaction
             await t.none(
@@ -792,7 +782,7 @@ app.post('/loan', authenticateToken, async (req, res) => {
 
                     nextLoanId++;
 
-                    if (loan_status == 'pending') {
+                    if (loan_status === 'pending') {
                         await t.none(
                             'UPDATE device_item SET item_availability = $1 WHERE item_id = $2',
                             [itemAvailabilityStatus, item_id]
@@ -827,70 +817,6 @@ app.post('/loan', authenticateToken, async (req, res) => {
         console.error('ERROR:', error);
         if (!res.headersSent) {
             res.status(500).json({ message: 'Error processing loan request' });
-        }
-    }
-});
-
-// confirm qrcode
-app.post('/confirm-loan', authenticateToken, async (req, res) => {
-    const { transaction_id } = req.body;
-    const user_id = req.user.id;
-    console.log('Transaction ID received for confirmation:', transaction_id);
-    console.log('User ID:', user_id);
-
-    try {
-        // ตรวจสอบว่ามี transaction_id นี้อยู่ในฐานข้อมูลหรือไม่
-        const transaction = await db.oneOrNone(
-            'SELECT transaction_id FROM transaction WHERE transaction_id = $1',
-            [transaction_id]
-        );
-
-        if (!transaction) {
-            return res.status(400).json({ message: 'Invalid transaction ID' });
-        }
-
-        // ตรวจสอบข้อมูลใน loan_detail โดยใช้ transaction_id และ user_id
-        const loanDetails = await db.any(
-            'SELECT * FROM loan_detail WHERE transaction_id = $1 AND user_id = $2',
-            [transaction_id, user_id]
-        );
-
-        if (loanDetails.length === 0) {
-            return res.status(400).json({ message: `No matching loan details found for Transaction ID: ${transaction_id} and User ID: ${user_id}` });
-        }
-
-        // อัปเดต loan_status และ transaction status
-        await db.tx(async t => {
-            const updateResult = await t.result(
-                'UPDATE loan_detail SET loan_status = $1, item_availability_status = $2 WHERE transaction_id = $3 AND user_id = $4',
-                ['approved', 'borrowed', transaction_id, user_id]
-            );
-
-            if (updateResult.rowCount === 0) {
-                throw new Error('Failed to update loan status or no rows affected.');
-            }
-
-            for (const { item_id } of loanDetails) {
-                await t.none(
-                    'UPDATE device_item SET item_availability = $1 WHERE item_id = $2',
-                    ['borrowed', item_id]
-                );
-            }
-
-            await t.none(
-                'UPDATE transaction SET loan_status = $1 WHERE transaction_id = $2',
-                ['approve', transaction_id]
-            );
-        });
-
-        res.status(200).json({ 
-            message: 'Loan request processed successfully', 
-            totalItems: totalItemQuantity,
-        });
-    } catch (error) {
-        console.error('ERROR:', error);
-        if (!res.headersSent) {
-            res.status(500).json({ message: 'Error confirming loan' });
         }
     }
 });

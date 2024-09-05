@@ -801,17 +801,11 @@
 //             // สร้าง transaction_id สำหรับการยืม
 //             const maxTransaction = await t.one('SELECT COALESCE(MAX(transaction_id), 0) AS max_id FROM transaction');
 //             const nextTransactionId = maxTransaction.max_id + 1;
-//             const qrCodeData = JSON.stringify({ transaction_id: nextTransactionId });
-//             const qrCodeFileName = `transaction_${nextTransactionId}.png`;
-//             const qrCodePath = path.join(__dirname, 'transaction_qrcodes', qrCodeFileName);
-
-//             // สร้าง QR code สำหรับ transaction_id
-//             await QRCode.toFile(qrCodePath, qrCodeData);
 
 //             // บันทึกข้อมูล transaction ก่อนการบันทึก loan_detail
 //             await t.none(
-//                 'INSERT INTO transaction(transaction_id, user_id, loan_date, due_date, item_quantity, loan_status, transaction_qrcode) VALUES($1, $2, $3, $4, $5, $6, $7)',
-//                 [nextTransactionId, user_id, loan_date, due_date, 0, loan_status, qrCodeFileName] // item_quantity จะอัปเดตทีหลัง
+//                 'INSERT INTO transaction(transaction_id, user_id, loan_date, due_date, item_quantity, loan_status) VALUES($1, $2, $3, $4, $5, $6)',
+//                 [nextTransactionId, user_id, loan_date, due_date, 0, loan_status] // item_quantity จะอัปเดตทีหลัง
 //             );
 
 //             for (const { device_id, quantity } of devices) {
@@ -836,7 +830,7 @@
 
 //                     await t.none(
 //                         'INSERT INTO loan_detail(loan_id, user_id, item_id, loan_status, due_date, item_availability_status, device_id, loan_date, cancelable_until, transaction_id) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
-//                         [nextLoanId, user_id, item_id, loan_status, due_date, itemAvailabilityStatus, device_id, loan_date, cancelable_until, nextTransactionId] // ใช้ nextTransactionId ที่ถูกบันทึกแล้ว
+//                         [nextLoanId, user_id, item_id, loan_status, due_date, itemAvailabilityStatus, device_id, loan_date, cancelable_until, nextTransactionId]
 //                     );
 
 //                     nextLoanId++;
@@ -867,14 +861,13 @@
 //             );
 
 //             // ส่งการแจ้งเตือนผ่าน Line Notify
-//             const notifyMessage = `มีการขอยืมอุปกรณ์ใหม่แล้ว. User ID: ${user_id}, จำนวนรวม: ${totalItemQuantity}, QR Code: ${qrCodeFileName}`;
+//             const notifyMessage = `มีการขอยืมอุปกรณ์ใหม่แล้ว. User ID: ${user_id}, จำนวนรวม: ${totalItemQuantity}`;
 //             await sendLineNotify(notifyMessage);
-            
+
 //             res.status(200).json({ 
 //                 message: 'Loan request processed successfully', 
 //                 totalItems: totalItemQuantity,
-//                 transactionId: nextTransactionId,
-//                 qrCodeFileName: qrCodeFileName
+//                 transactionId: nextTransactionId
 //             });
 //         });
 //     } catch (error) {
@@ -884,26 +877,12 @@
 //         }
 //     }
 // });
-
+// // confirm qrcode
 // app.post('/confirm-loan', authenticateToken, async (req, res) => {
 //     const { transaction_id } = req.body;
 //     const user_id = req.user.id;
 //     console.log('Transaction ID received for confirmation:', transaction_id);
 //     console.log('User ID:', user_id);
-
-//     // ตรวจสอบว่ามี transaction_id นี้อยู่หรือไม่
-//     const loanDetail = await db.any(
-//         'SELECT * FROM loan_detail WHERE transaction_id = $1 AND user_id = $2',
-//         [transaction_id, user_id]
-//     );
-
-//     console.log('Loan Details:', loanDetail);
-
-//     if (loanDetail.length === 0) {
-//         return res.status(400).json({ 
-//             message: `No matching loan details found for Transaction ID: ${transaction_id}`
-//         });
-//     };
 
 //     try {
 //         // ตรวจสอบว่ามี transaction_id นี้อยู่ในฐานข้อมูลหรือไม่
@@ -916,23 +895,13 @@
 //             return res.status(400).json({ message: 'Invalid transaction ID' });
 //         }
 
-//         // ตรวจสอบข้อมูลใน loan_detail โดยใช้เพียง transaction_id ก่อน
+//         // ตรวจสอบข้อมูลใน loan_detail โดยใช้ transaction_id และ user_id
 //         const loanDetails = await db.any(
-//             'SELECT * FROM loan_detail WHERE transaction_id = $1',
-//             [transaction_id]
+//             'SELECT * FROM loan_detail WHERE transaction_id = $1 AND user_id = $2',
+//             [transaction_id, user_id]
 //         );
 
-//         console.log('Loan Details:', loanDetails); // แสดงข้อมูลใน console เพื่อตรวจสอบ
-
-//         // ตรวจสอบว่ามีข้อมูล loan_detail สำหรับ transaction_id หรือไม่
 //         if (loanDetails.length === 0) {
-//             return res.status(400).json({ message: 'No matching loan details found for this transaction ID' });
-//         }
-
-//         // ตรวจสอบว่ามีรายการที่ตรงกับ user_id หรือไม่
-//         const userLoanDetail = loanDetails.find(detail => detail.user_id === user_id);
-
-//         if (!userLoanDetail) {
 //             return res.status(400).json({ message: `No matching loan details found for Transaction ID: ${transaction_id} and User ID: ${user_id}` });
 //         }
 
@@ -942,8 +911,6 @@
 //                 'UPDATE loan_detail SET loan_status = $1, item_availability_status = $2 WHERE transaction_id = $3 AND user_id = $4',
 //                 ['approved', 'borrowed', transaction_id, user_id]
 //             );
-
-//             console.log('Update Result:', updateResult); // แสดงผลลัพธ์ของการอัปเดต
 
 //             if (updateResult.rowCount === 0) {
 //                 throw new Error('Failed to update loan status or no rows affected.');

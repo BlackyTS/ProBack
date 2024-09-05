@@ -20,7 +20,7 @@ const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
 require('dotenv').config()
 
 const corsOptions = {
-    origin: 'http://localhost:3000',
+    origin: '*',
     credentials: true,  
     optionsSuccessStatus: 200
 }

@@ -1,0 +1,32 @@
+version: '3'
+services:
+  postgres:
+    image: postgres:13
+    container_name: postgres_db
+    environment:
+      POSTGRES_DB: ProjectTEST
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    image: server 
+    container_name: backend_app
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ProjectTEST
+      DB_USER: postgres
+      DB_PASSWORD: admin
+    ports:
+      - "8000:8000" 
+    depends_on:
+      - postgres
+    links:
+      - postgres
+
+volumes:
+  postgres_data:

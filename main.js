@@ -683,12 +683,16 @@ const{ sendLineNotifyClaim } = require('./Function/nontify_claim')
 app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
     const { transaction_id, loan_status, admin_comment, location } = req.body;
     let item_availability_status;
-    
+    let confirm_date;
+
     // กำหนดค่า item_availability_status ตาม loan_status
     if (loan_status == 'pending') {
         item_availability_status = 'pending';
     } else if (loan_status == 'approve') {
         item_availability_status = 'pending';
+        // เพิ่ม 7 วันจากวันที่ยืนยันการอนุมัติ
+        confirm_date = new Date();
+        confirm_date.setDate(confirm_date.getDate() + 7);
     } else if (loan_status == 'deny') {
         item_availability_status = 'ready';
     } else {
@@ -728,17 +732,18 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
             }
 
             const result = await t.result(
-                'UPDATE loan_detail SET loan_status = $1, item_availability_status = $2, admin_comment = $3, location_to_loan = $4 WHERE transaction_id = $5',
-                [loan_status, item_availability_status, admin_comment, location, transaction_id]
+                'UPDATE loan_detail SET loan_status = $1, item_availability_status = $2, admin_comment = $3, location_to_loan = $4, due_date = $5 WHERE transaction_id = $6',
+                [loan_status, item_availability_status, admin_comment, location, confirm_date, transaction_id]
             );
 
             if (result.rowCount == 0) {
                 return res.status(404).json({ message: `ไม่พบการอัปเดตรายละเอียดการยืมสำหรับ Transaction ID ${transaction_id}` });
             }
 
+            // อัปเดต due_date และ loan_status ในตาราง transaction
             await t.none(
-                'UPDATE transaction SET loan_status = $1 WHERE transaction_id = $2',
-                [loan_status, transaction_id]
+                'UPDATE transaction SET loan_status = $1, due_date = $2 WHERE transaction_id = $3',
+                [loan_status, confirm_date, transaction_id]
             );
 
             const itemIds = items.map(item => item.item_id);
@@ -749,7 +754,7 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
                     'UPDATE device_item SET item_loaning = true, item_availability = $1 WHERE item_id = ANY($2::int[])',
                     [item_availability_status, itemIds]
                 );
-                const message = `รายการยืมอุปกรณ์ของ ${user_firstname} ${user_lastname}(User ID: ${user_id}) ได้เตรียมอุปกรณ์เสร็จเรียบร้อย กรุณามารับได้ครับ`;
+                const message = `รายการยืมอุปกรณ์ของ ${user_firstname} ${user_lastname}(User ID: ${user_id}) ได้เตรียมอุปกรณ์เสร็จเรียบร้อย กรุณามารับได้ครับ กำหนดคืนวันที่: ${confirm_date.toLocaleDateString()}`;
                 await sendLineNotifyClaim(message);
 
             } else if (loan_status == 'pending') {
@@ -780,7 +785,6 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Error updating requests' });
     }
 });
-
 // ยืนยันการรับอุปกรณ์
 //ผ่านเว็บ
 app.put('/user/confirm-loan', authenticateToken, async (req, res) => {
@@ -1008,7 +1012,7 @@ app.post('/loan', async (req, res) => {
         }
 
         if (!due_date || isNaN(new Date(due_date).getTime())) {
-            return res.status(400).json({ message: 'Invalid due date.' });
+            return res.status(400).json({ message: 'Invalid get date.' });
         }
 
         const user_id = id;
@@ -1092,10 +1096,12 @@ app.post('/loan', async (req, res) => {
                 [totalItemQuantity, nextTransactionId]
             );
 
-            res.status(200).json({ message: 'Loan request processed successfully', transactionId: nextTransactionId, serialNumber: serialNumber });
+            res.status(200).json({ message: 'Loan request processed successfully' });
+            console.log(nextTransactionId)
+            console.log(serialNumber)
 
             // ส่งการแจ้งเตือนผ่าน Line Notify พร้อมชื่อผู้ยืม
-            const notifyMessage = `มีการขอยืมอุปกรณ์ใหม่แล้ว. ชื่อผู้ยืม: ${user_firstname} ${user_lastname}(User ID: ${user_id}), จำนวนรวม: ${totalItemQuantity}`;
+            const notifyMessage = `มีการขอยืมอุปกรณ์ใหม่แล้ว. ชื่อผู้ยืม: ${user_firstname} ${user_lastname}(User ID: ${user_id}), จำนวนรวม: ${totalItemQuantity}, จะมารับอุปกรณ์ภายในวันที่ ${new Date(due_date).toLocaleDateString()} `;
             await sendLineNotify(notifyMessage);
         });
     } catch (error) {

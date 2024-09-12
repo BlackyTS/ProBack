@@ -2010,6 +2010,51 @@ app.get('/report/download', async (req, res) => {
     }
 });
 
+// approve แค่ละคน
+app.get('/loan_detail/approve/:user_id', authenticateToken, async (req, res) => {
+    const { user_id } = req.params; // ดึง user_id จากพารามิเตอร์ URL
+
+    try {
+        const requests = await db.any(`
+            SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, u.user_phone, t.loan_date, t.due_date, t.item_quantity, ld.loan_status, ld.item_id
+            FROM transaction t
+            JOIN users u ON t.user_id = u.user_id
+            LEFT JOIN loan_detail ld ON t.transaction_id = ld.transaction_id
+            WHERE ld.loan_status = 'approve' AND t.user_id = $1
+            ORDER BY t.loan_date DESC;
+        `, [user_id]);
+
+        // Group the results by transaction_id and aggregate item_ids
+        const groupedRequests = requests.reduce((acc, curr) => {
+            const existingRequest = acc.find(req => req.transaction_id == curr.transaction_id);
+            if (existingRequest) {
+                existingRequest.item_ids.push(curr.item_id); // Aggregate item_ids
+                existingRequest.loan_status = curr.loan_status; // Update loan_status
+            } else {
+                acc.push({
+                    user_id: curr.user_id,
+                    transaction_id: curr.transaction_id,
+                    user_firstname: curr.user_firstname,
+                    user_email: curr.user_email,
+                    user_phone: curr.user_phone, // Add user_phone
+                    loan_date: moment.utc(curr.loan_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
+                    due_date: moment.utc(curr.due_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
+                    item_quantity: curr.item_quantity,
+                    loan_status: curr.loan_status,
+                    item_ids: [curr.item_id] // Initialize item_ids array
+                });
+            }
+            return acc;
+        }, []);
+
+        // Optionally, convert item_ids to a string
+        groupedRequests.forEach(req => req.item_ids = req.item_ids.join(','));
+        res.status(200).json(groupedRequests);
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error fetching transactions' });
+    }
+});
 
 
 

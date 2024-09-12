@@ -290,7 +290,6 @@ app.put('/device/update', authenticateToken, async (req, res) => {
 app.delete('/devices/delete', authenticateToken, async (req, res) => {
     const { id } = req.body;
     if (!id) {
-        // ตรวจสอบว่ามี id หรือไม่
         return res.status(400).json({ message: 'ID is required' });
     }
     try {
@@ -305,14 +304,22 @@ app.delete('/devices/delete', authenticateToken, async (req, res) => {
 
         const device = await db.oneOrNone('SELECT device_serial FROM device WHERE device_id = $1', [id]);
         if (!device) {
-            // ตรวจสอบว่ามี device ที่ต้องการลบอยู่ในฐานข้อมูลหรือไม่
             return res.status(404).json({ message: 'Device not found' });
         }
 
         const serial = device.device_serial;
 
         await db.tx(async t => {
+            // ลบข้อมูลจาก return_detail ที่มี item_id ที่เกี่ยวข้องกับ device_id
+            await t.none('DELETE FROM return_detail WHERE item_id IN (SELECT item_id FROM device_item WHERE device_id = $1)', [id]);
+
+            // ลบข้อมูลจาก loan_detail ที่มี device_id
+            await t.none('DELETE FROM loan_detail WHERE device_id = $1', [id]);
+
+            // ลบข้อมูลจาก device_item ที่มี device_id
             await t.none('DELETE FROM device_item WHERE device_id = $1', [id]);
+
+            // ลบข้อมูลจาก device ที่มี device_id
             await t.none('DELETE FROM device WHERE device_id = $1', [id]);
         });
 
@@ -328,6 +335,7 @@ app.delete('/devices/delete', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Error deleting device, related items, or folder' });
     }
 });
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // แก้ไขสถานะอุปกรณ์แต่ละตัว (แก้สถานะ device_item ตาม item_id)
 app.put('/device_item/update', authenticateToken, async (req, res) => {
@@ -787,7 +795,7 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
 });
 // ยืนยันการรับอุปกรณ์
 //ผ่านเว็บ
-app.put('/user/confirm-loan', authenticateToken, async (req, res) => {
+app.put('/confirm-loan', authenticateToken, async (req, res) => {
     const { transaction_id } = req.body;
     if (!transaction_id) {
         return res.status(400).json({ message: 'Transaction ID is required' });
@@ -832,7 +840,7 @@ app.put('/user/confirm-loan', authenticateToken, async (req, res) => {
     }
 });
 // ผ่าน Qrcode แต่ละอุปกรณ์
-app.get('/user/confirm-loan-data', async (req, res) => {
+app.get('/confirm-loan-data', async (req, res) => {
     const data = req.query.data;
 
     try {
@@ -866,7 +874,7 @@ app.get('/user/confirm-loan-data', async (req, res) => {
         res.status(500).json({ message: 'เกิดข้อผิดพลาดในการประมวลผลข้อมูล QR code.' });
     }
 });
-app.put('/admin/confirm-loan-qrcode', authenticateToken, async (req, res) => {
+app.put('/confirm-loan-qrcode', authenticateToken, async (req, res) => {
     const { transaction_id, items } = req.body;  // รับ items เป็น array ที่มี item_id และ status ของแต่ละรายการ
 
     if (!transaction_id || !items || !items.length) {

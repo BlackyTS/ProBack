@@ -42,3 +42,4 @@ report/~$*.xlsx
 # No file to uploads and qrcodes
 /uploads/
 /qrcodes/
+/report/

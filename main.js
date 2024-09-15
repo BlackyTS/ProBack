@@ -1604,7 +1604,7 @@ app.get('/admin/history/:user_id/:transaction_id', authenticateToken, async (req
                 t.loan_date,
                 t.due_date,
                 t.return_date,
-                r.return_status,  
+                r.return_status,
                 r.item_id
             FROM return_detail r
             JOIN transaction t ON r.transaction_id = t.transaction_id
@@ -1614,6 +1614,10 @@ app.get('/admin/history/:user_id/:transaction_id', authenticateToken, async (req
             AND t.transaction_id = $2
             ORDER BY t.loan_date DESC, t.return_date DESC
         `, [user_id, transaction_id]);
+
+        if (history.length === 0) {
+            return res.status(404).json({ message: 'อุปกรณ์กำลังอยู่ในกระบวนการถูกยืม' });
+        }
 
         res.status(200).json(history);
     } catch (error) {

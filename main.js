@@ -356,9 +356,9 @@ app.put('/device_item/update', authenticateToken, async (req, res) => {
             return res.status(404).json({ message: 'Item not found' });
         }
 
-        // เงื่อนไขไม่อนุญาตให้แก้สถานะที่เป็น pending, borrowed, หรือ not ready
-        if (oldItem.item_availability === 'pending' || oldItem.item_availability === 'borrowed' || oldItem.item_availability === 'not ready') {
-            return res.status(403).json({ message: 'Cannot update the status of an item with status "pending", "borrowed", or "not ready".' });
+        // เงื่อนไขไม่อนุญาตให้แก้สถานะที่เป็น pending, borrowed
+        if (oldItem.item_availability === 'pending' || oldItem.item_availability === 'borrowed') {
+            return res.status(403).json({ message: 'Cannot update the status of an item with status "pending", "borrowed".' });
         }
 
         // อัปเดตสถานะใหม่
@@ -373,13 +373,13 @@ app.put('/device_item/update', authenticateToken, async (req, res) => {
         }
 
         // ปรับปรุงจำนวนในตาราง device ตามสถานะที่เปลี่ยนแปลง
-        if (oldItem.item_availability === 'ready' && item_availability !== 'ready') {
+        if (oldItem.item_availability == 'ready' && item_availability !== 'ready') {
             await db.none(`
                 UPDATE device
                 SET device_availability = device_availability - 1
                 WHERE device_id = $1
             `, [oldItem.device_id]);
-        } else if (oldItem.item_availability !== 'ready' && item_availability === 'ready') {
+        } else if (oldItem.item_availability !== 'ready' && item_availability == 'ready') {
             await db.none(`
                 UPDATE device
                 SET device_availability = device_availability + 1
@@ -1568,7 +1568,7 @@ app.post('/return/scan-item', async (req, res) => {
 app.get('/admin/history', authenticateToken, async (req, res) => {
     try {
         const history = await db.any(`
-            SELECT DISTINCT 
+            SELECT 
                 t.user_id,
                 t.transaction_id,
                 u.user_firstname,
@@ -1576,12 +1576,9 @@ app.get('/admin/history', authenticateToken, async (req, res) => {
                 t.loan_date,
                 t.due_date,
                 t.return_date,
-                t.item_quantity,
-                r.return_status
+                t.item_quantity
             FROM transaction t
             JOIN users u ON t.user_id = u.user_id
-            LEFT JOIN return_detail r ON t.transaction_id = r.transaction_id
-            WHERE r.return_status IN ('returned', 'lost', 'damaged')
             ORDER BY t.loan_date DESC
         `);
 
@@ -1591,13 +1588,14 @@ app.get('/admin/history', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Server error' });
     }
 });
+
 // ประวัติการยืม-คืนที่สำเร็จแล้วแบบละเอียด
 app.get('/admin/history/:user_id/:transaction_id', authenticateToken, async (req, res) => {
     const { user_id, transaction_id } = req.params;
 
     try {
         const history = await db.any(`
-            SELECT DISTINCT
+            SELECT
                 r.return_id,
                 di.item_name,
                 di.item_serial,
@@ -1606,14 +1604,12 @@ app.get('/admin/history/:user_id/:transaction_id', authenticateToken, async (req
                 t.loan_date,
                 t.due_date,
                 t.return_date,
-                ls.item_availability_status,
-                r.return_status,
+                r.return_status,  
                 r.item_id
             FROM return_detail r
             JOIN transaction t ON r.transaction_id = t.transaction_id
             JOIN device_item di ON r.item_id = di.item_id
             JOIN users u ON t.user_id = u.user_id
-            JOIN loan_detail ls ON t.transaction_id = ls.transaction_id
             WHERE t.user_id = $1
             AND t.transaction_id = $2
             ORDER BY t.loan_date DESC, t.return_date DESC

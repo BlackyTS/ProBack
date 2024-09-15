@@ -1244,12 +1244,11 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
         console.log('Request body:', req.body);
         console.log('File info:', req.file);
 
-        // ดึงข้อมูล items จาก body และตรวจสอบการอัปโหลดไฟล์
+        // แปลงสตริง JSON เป็นอ็อบเจ็กต์
         items = req.body.items ? JSON.parse(req.body.items) : [];
         tempPhotoPath = req.file ? req.file.path : null;
 
         if (!items || !Array.isArray(items) || items.length === 0) {
-            // ถ้าไม่มีรายการคืน
             if (tempPhotoPath) {
                 fs.unlinkSync(tempPhotoPath);
             }
@@ -1257,13 +1256,12 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
         }
 
         const returnDate = new Date();
-        const adminUserId = req.user.user_id; // ดึง user_id ของแอดมินจาก JWT
+        const adminUserId = req.user.user_id;
 
         await db.tx(async t => {
             let deviceUpdates = new Map();
 
             for (const { item_id, return_status } of items) {
-                // ค้นหา transaction_id สำหรับรายการที่คืน
                 const transactions = await t.any(
                     'SELECT transaction_id, user_id FROM loan_detail WHERE item_id = $1 AND return_date IS NULL',
                     [item_id]
@@ -1271,40 +1269,33 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
 
                 if (transactions.length === 0) {
                     if (tempPhotoPath) {
-                        fs.unlinkSync(tempPhotoPath); // ลบไฟล์ชั่วคราวถ้าไม่พบ transaction_id
+                        fs.unlinkSync(tempPhotoPath);
                     }
                     return res.status(400).json({ message: `Item ${item_id} does not have an active loan.` });
                 }
 
-                // ใช้ transaction_id แรกที่พบ
                 const transaction_id = transactions[0].transaction_id;
                 const transaction_user_id = transactions[0].user_id;
 
-                // หา return_id สูงสุด
                 const result = await t.one('SELECT COALESCE(MAX(return_id), 0) AS max_id FROM return_detail');
                 const nextId = result.max_id + 1;
 
-                // บันทึกข้อมูลลงในตาราง return_detail
                 await t.none(
                     'INSERT INTO return_detail(return_id, user_id, item_id, return_status, device_photo, return_date, transaction_id) VALUES($1, $2, $3, $4, $5, $6, $7)',
                     [nextId, transaction_user_id, item_id, return_status, tempPhotoPath ? finalPhotoPath : null, returnDate, transaction_id]
                 );
 
-                // อัปเดตสถานะคืนใน loan_detail
                 await t.none(
                     'UPDATE loan_detail SET return_date = $1, loan_status = $2, item_availability_status = $3 WHERE item_id = $4 AND return_date IS NULL',
                     [returnDate, 'complete', 'complete', item_id]
                 );
 
-                // อัปเดตสถานะของ item ใน device_item และ device
-                if (return_status === 'ready') {
-                    // เพิ่มจำนวนใน device_availability สำหรับสถานะ ready
+                if (return_status === 'returned') {
                     await t.none(
                         'UPDATE device_item SET item_availability = $1, item_loaning = false WHERE item_id = $2',
                         ['ready', item_id]
                     );
 
-                    // ค้นหาค่า device_id สำหรับ item_id
                     const { device_id } = await t.one(
                         'SELECT device_id FROM device_item WHERE item_id = $1',
                         [item_id]
@@ -1316,27 +1307,23 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
 
                     deviceUpdates.set(device_id, deviceUpdates.get(device_id) + 1);
                 } else if (return_status === 'lost') {
-                    // แค่เปลี่ยนสถานะใน device_item สำหรับ lost
                     await t.none(
                         'UPDATE device_item SET item_availability = $1, item_loaning = false WHERE item_id = $2',
                         ['lost', item_id]
                     );
                 } else if (return_status === 'damaged') {
-                    // แค่เปลี่ยนสถานะใน device_item สำหรับ damaged
                     await t.none(
                         'UPDATE device_item SET item_availability = $1, item_loaning = false WHERE item_id = $2',
                         ['broken', item_id]
                     );
                 }
 
-                // อัปเดตข้อมูลในตาราง transaction
                 await t.none(
                     'UPDATE transaction SET return_date = $1, device_photo = $2, loan_status = $3 WHERE transaction_id = $4',
                     [returnDate, tempPhotoPath ? finalPhotoPath : null, 'complete', transaction_id]
                 );
             }
 
-            // อัปเดตจำนวนอุปกรณ์ที่คืนในตาราง device
             for (const [device_id, returnedCount] of deviceUpdates) {
                 await t.none(
                     'UPDATE device SET device_availability = device_availability + $1 WHERE device_id = $2',
@@ -1354,7 +1341,7 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
     } catch (error) {
         console.error('ERROR:', error);
         if (tempPhotoPath && fs.existsSync(tempPhotoPath)) {
-            fs.unlinkSync(tempPhotoPath); // ลบไฟล์ชั่วคราวถ้าเกิดข้อผิดพลาด
+            fs.unlinkSync(tempPhotoPath);
         }
         if (!res.headersSent) {
             res.status(500).json({ message: 'Error processing return' });
@@ -1576,7 +1563,13 @@ app.get('/admin/history', authenticateToken, async (req, res) => {
                 t.loan_date,
                 t.due_date,
                 t.return_date,
-                t.item_quantity
+                t.item_quantity,
+                CASE
+                    WHEN t.loan_status = 'deny' THEN 'ถูกยกเลิก'
+                    WHEN t.loan_status = 'cancel' THEN 'ถูกปฏิเสธ'
+                    WHEN t.return_date IS NOT NULL THEN 'คืนแล้ว'
+                    ELSE 'ยังไม่ได้คืน'
+                END AS return_status
             FROM transaction t
             JOIN users u ON t.user_id = u.user_id
             ORDER BY t.loan_date DESC
@@ -2143,8 +2136,13 @@ app.get('/user/history/:id', authenticateToken, async (req, res) => {
                 t.item_quantity
             FROM transaction t
             JOIN users u ON t.user_id = u.user_id
+            WHERE t.user_id = $1
             ORDER BY t.loan_date DESC
         `, [id]);
+
+        if (history.length === 0) {
+            return res.status(404).json({ message: 'ไม่พบประวัติสำหรับผู้ใช้ที่ระบุ' });
+        }
 
         res.status(200).json(history);
     } catch (error) {
@@ -2152,6 +2150,7 @@ app.get('/user/history/:id', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Server error' });
     }
 });
+
 app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req, res) => {
     const { user_id, transaction_id } = req.params;
 

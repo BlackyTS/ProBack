@@ -436,7 +436,7 @@ app.get('/admin/loan_detail/:user_id/:transaction_id', authenticateToken, async 
 app.get('/admin/loan_detail', authenticateToken, async (req, res) => {
     try {
         const requests = await db.any(`
-            SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, t.loan_date, t.due_date, t.item_quantity, ld.loan_status
+            SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, u.user_phone, t.loan_date, t.due_date, t.item_quantity, ld.loan_status
             FROM transaction t
             JOIN users u ON t.user_id = u.user_id
             LEFT JOIN loan_detail ld ON t.transaction_id = ld.transaction_id
@@ -447,7 +447,6 @@ app.get('/admin/loan_detail', authenticateToken, async (req, res) => {
             return res.status(404).json({ message: 'No transactions found' });
         }
 
-        // Group the results by user_id and transaction_id
         const groupedRequests = requests.reduce((acc, curr) => {
             const existingRequest = acc.find(req => req.user_id == curr.user_id && req.transaction_id == curr.transaction_id);
             if (existingRequest) {
@@ -458,6 +457,7 @@ app.get('/admin/loan_detail', authenticateToken, async (req, res) => {
                     transaction_id: curr.transaction_id,
                     user_firstname: curr.user_firstname,
                     user_email: curr.user_email,
+                    user_phone: curr.user_phone,
                     loan_date: moment.utc(curr.loan_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
                     due_date: moment.utc(curr.due_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
                     item_quantity: curr.item_quantity,
@@ -466,12 +466,14 @@ app.get('/admin/loan_detail', authenticateToken, async (req, res) => {
             }
             return acc;
         }, []);
+
         res.status(200).json(groupedRequests);
     } catch (error) {
         console.error('ERROR:', error);
         res.status(500).json({ message: 'Error fetching transactions' });
     }
 });
+
 
 // ดูคำร้องรอยืนยัน pending
 app.get('/admin/loan_detail/pending', authenticateToken, async (req, res) => {
@@ -484,12 +486,11 @@ app.get('/admin/loan_detail/pending', authenticateToken, async (req, res) => {
             WHERE ld.loan_status = 'pending'
             ORDER BY t.loan_date DESC;
         `);
-        // Group the results by user_id and transaction_id and aggregate item_ids
         const groupedRequests = requests.reduce((acc, curr) => {
             const existingRequest = acc.find(req => req.user_id == curr.user_id && req.transaction_id == curr.transaction_id);
             if (existingRequest) {
-                existingRequest.item_ids.push(curr.item_id); // Aggregate item_ids
-                existingRequest.loan_status = curr.loan_status; // Update loan_status
+                existingRequest.item_ids.push(curr.item_id); 
+                existingRequest.loan_status = curr.loan_status; 
             } else {
                 acc.push({
                     user_id: curr.user_id,
@@ -500,12 +501,11 @@ app.get('/admin/loan_detail/pending', authenticateToken, async (req, res) => {
                     due_date: moment.utc(curr.due_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
                     item_quantity: curr.item_quantity,
                     loan_status: curr.loan_status,
-                    item_ids: [curr.item_id] // Initialize item_ids array
+                    item_ids: [curr.item_id] 
                 });
             }
             return acc;
         }, []);
-        // Optionally, you can convert item_ids to a string if needed
         groupedRequests.forEach(req => req.item_ids = req.item_ids.join(','));
         res.status(200).json(groupedRequests);
     } catch (error) {
@@ -524,25 +524,23 @@ app.get('/admin/loan_detail/approve', authenticateToken, async (req, res) => {
             WHERE ld.loan_status = 'approve'
             ORDER BY t.loan_date DESC;
         `);
-
-        // Group the results by user_id and transaction_id and aggregate item_ids
         const groupedRequests = requests.reduce((acc, curr) => {
             const existingRequest = acc.find(req => req.user_id == curr.user_id && req.transaction_id == curr.transaction_id);
             if (existingRequest) {
-                existingRequest.item_ids.push(curr.item_id); // Aggregate item_ids
-                existingRequest.loan_status = curr.loan_status; // Update loan_status
+                existingRequest.item_ids.push(curr.item_id); 
+                existingRequest.loan_status = curr.loan_status;
             } else {
                 acc.push({
                     user_id: curr.user_id,
                     transaction_id: curr.transaction_id,
                     user_firstname: curr.user_firstname,
                     user_email: curr.user_email,
-                    user_phone: curr.user_phone, // Add user_phone
+                    user_phone: curr.user_phone, 
                     loan_date: moment.utc(curr.loan_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
                     due_date: moment.utc(curr.due_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
                     item_quantity: curr.item_quantity,
                     loan_status: curr.loan_status,
-                    item_ids: [curr.item_id] // Initialize item_ids array
+                    item_ids: [curr.item_id] 
                 });
             }
             return acc;
@@ -557,7 +555,6 @@ app.get('/admin/loan_detail/approve', authenticateToken, async (req, res) => {
 // ดูคำร้องยืนยัน borrowed
 app.get('/admin/loan_detail/borrowed', authenticateToken, async (req, res) => {
     try {
-        // ดึงข้อมูลรายการที่มีสถานะ 'borrowed' เท่านั้น
         const requests = await db.any(`
             SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, u.user_phone, t.loan_date, t.due_date, t.item_quantity, ld.loan_status, ld.item_id
             FROM transaction t
@@ -566,24 +563,23 @@ app.get('/admin/loan_detail/borrowed', authenticateToken, async (req, res) => {
             WHERE ld.loan_status = 'borrowed'
             ORDER BY t.loan_date DESC;
         `);
-        // Group the results by user_id and transaction_id and aggregate item_ids
         const groupedRequests = requests.reduce((acc, curr) => {
             const existingRequest = acc.find(req => req.user_id == curr.user_id && req.transaction_id == curr.transaction_id);
             if (existingRequest) {
-                existingRequest.item_ids.push(curr.item_id); // Aggregate item_ids
-                existingRequest.loan_status = curr.loan_status; // Update loan_status
+                existingRequest.item_ids.push(curr.item_id); 
+                existingRequest.loan_status = curr.loan_status; 
             } else {
                 acc.push({
                     user_id: curr.user_id,
                     transaction_id: curr.transaction_id,
                     user_firstname: curr.user_firstname,
                     user_email: curr.user_email,
-                    user_phone: curr.user_phone, // Add user_phone
+                    user_phone: curr.user_phone,
                     loan_date: moment.utc(curr.loan_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
                     due_date: moment.utc(curr.due_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
                     item_quantity: curr.item_quantity,
                     loan_status: curr.loan_status,
-                    item_ids: [curr.item_id] // Initialize item_ids array
+                    item_ids: [curr.item_id] 
                 });
             }
             return acc;
@@ -599,41 +595,54 @@ app.get('/admin/loan_detail/borrowed', authenticateToken, async (req, res) => {
 app.get('/admin/loan_detail/deny', authenticateToken, async (req, res) => {
     try {
         const requests = await db.any(`
-            SELECT t.user_id, t.transaction_id, u.user_firstname, u.user_email, t.loan_date, t.due_date, t.item_quantity, ld.loan_status, ld.item_id
+            SELECT 
+                t.user_id, 
+                t.transaction_id, 
+                u.user_firstname, 
+                u.user_email, 
+                u.user_phone,  -- เพิ่ม user_phone
+                t.loan_date, 
+                t.due_date, 
+                t.item_quantity, 
+                ld.loan_status, 
+                ld.item_id
             FROM transaction t
             JOIN users u ON t.user_id = u.user_id
             LEFT JOIN loan_detail ld ON t.transaction_id = ld.transaction_id
             WHERE ld.loan_status = 'deny'
             ORDER BY t.loan_date DESC;
         `);
-        // Group the results by user_id and transaction_id and aggregate item_ids
         const groupedRequests = requests.reduce((acc, curr) => {
             const existingRequest = acc.find(req => req.user_id == curr.user_id && req.transaction_id == curr.transaction_id);
             if (existingRequest) {
-                existingRequest.item_ids.push(curr.item_id); // Aggregate item_ids
-                existingRequest.loan_status = curr.loan_status; // Update loan_status
+                existingRequest.item_ids.push(curr.item_id);
+                existingRequest.loan_status = curr.loan_status; 
             } else {
                 acc.push({
                     user_id: curr.user_id,
                     transaction_id: curr.transaction_id,
                     user_firstname: curr.user_firstname,
                     user_email: curr.user_email,
+                    user_phone: curr.user_phone, 
                     loan_date: moment.utc(curr.loan_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
                     due_date: moment.utc(curr.due_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
                     item_quantity: curr.item_quantity,
                     loan_status: curr.loan_status,
-                    item_ids: [curr.item_id] // Initialize item_ids array
+                    item_ids: [curr.item_id]
                 });
             }
             return acc;
         }, []);
+
         groupedRequests.forEach(req => req.item_ids = req.item_ids.join(','));
+
         res.status(200).json(groupedRequests);
     } catch (error) {
         console.error('ERROR:', error);
         res.status(500).json({ message: 'Error fetching transactions' });
     }
 });
+
 // ดูคำร้องที่สำเร็จ complete
 app.get('/admin/loan_detail/complete', authenticateToken, async (req, res) => {
     try {
@@ -651,8 +660,8 @@ app.get('/admin/loan_detail/complete', authenticateToken, async (req, res) => {
         const groupedRequests = requests.reduce((acc, curr) => {
             const existingRequest = acc.find(req => req.user_id == curr.user_id && req.transaction_id == curr.transaction_id);
             if (existingRequest) {
-                existingRequest.item_ids.push(curr.item_id); // Aggregate item_ids
-                existingRequest.loan_status = curr.loan_status; // Update loan_status
+                existingRequest.item_ids.push(curr.item_id); 
+                existingRequest.loan_status = curr.loan_status;
             } else {
                 acc.push({
                     user_id: curr.user_id,
@@ -663,12 +672,11 @@ app.get('/admin/loan_detail/complete', authenticateToken, async (req, res) => {
                     due_date: moment.utc(curr.due_date).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
                     item_quantity: curr.item_quantity,
                     loan_status: curr.loan_status,
-                    item_ids: [curr.item_id] // Initialize item_ids array
+                    item_ids: [curr.item_id] 
                 });
             }
             return acc;
         }, []);
-        // Optionally, you can convert item_ids to a string if needed
         groupedRequests.forEach(req => req.item_ids = req.item_ids.join(','));
 
         res.status(200).json(groupedRequests);
@@ -1560,6 +1568,7 @@ app.get('/admin/history', authenticateToken, async (req, res) => {
                 t.transaction_id,
                 u.user_firstname,
                 u.user_email,
+                u.user_phone,
                 t.loan_date,
                 t.due_date,
                 t.return_date,
@@ -1567,6 +1576,8 @@ app.get('/admin/history', authenticateToken, async (req, res) => {
                 CASE
                     WHEN t.loan_status = 'deny' THEN 'ถูกยกเลิก'
                     WHEN t.loan_status = 'cancel' THEN 'ถูกปฏิเสธ'
+                    WHEN t.loan_status = 'pending' THEN 'อยู่ในกระบวนการ'
+                    WHEN t.loan_status = 'approve' THEN 'กำลังยืม'
                     WHEN t.return_date IS NOT NULL THEN 'คืนแล้ว'
                     ELSE 'ยังไม่ได้คืน'
                 END AS return_status
@@ -2126,14 +2137,15 @@ app.get('/user/history/:id', authenticateToken, async (req, res) => {
     try {
         const history = await db.any(`
             SELECT 
-                t.user_id,
-                t.transaction_id,
-                u.user_firstname,
-                u.user_email,
-                t.loan_date,
-                t.due_date,
-                t.return_date,
-                t.item_quantity
+            t.user_id,
+            t.transaction_id,
+            u.user_firstname,
+            u.user_email,
+            u.user_phone,
+            t.loan_date,
+            t.due_date,
+            t.return_date,
+            t.item_quantity
             FROM transaction t
             JOIN users u ON t.user_id = u.user_id
             WHERE t.user_id = $1

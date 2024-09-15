@@ -1599,8 +1599,7 @@ app.get('/admin/history/:user_id/:transaction_id', authenticateToken, async (req
 
     try {
         const history = await db.any(`
-            SELECT
-                r.return_id,
+            SELECT DISTINCT
                 di.item_name,
                 di.item_serial,
                 t.user_id,
@@ -1608,12 +1607,19 @@ app.get('/admin/history/:user_id/:transaction_id', authenticateToken, async (req
                 t.loan_date,
                 t.due_date,
                 t.return_date,
-                r.return_status,
+                COALESCE(
+                    CASE 
+                        WHEN l.loan_status IN ('cancel', 'deny') THEN l.loan_status
+                        WHEN l.loan_status = 'complete' THEN r.return_status
+                    END, 'Unknown'
+                ) AS status,
+                r.return_id,
                 r.item_id
-            FROM return_detail r
-            JOIN transaction t ON r.transaction_id = t.transaction_id
-            JOIN device_item di ON r.item_id = di.item_id
-            JOIN users u ON t.user_id = u.user_id
+            FROM transaction t
+            LEFT JOIN device_item di ON di.item_id = (SELECT item_id FROM loan_detail WHERE transaction_id = t.transaction_id LIMIT 1)
+            LEFT JOIN users u ON t.user_id = u.user_id
+            LEFT JOIN loan_detail l ON t.transaction_id = l.transaction_id
+            LEFT JOIN return_detail r ON t.transaction_id = r.transaction_id
             WHERE t.user_id = $1
             AND t.transaction_id = $2
             ORDER BY t.loan_date DESC, t.return_date DESC
@@ -2137,15 +2143,23 @@ app.get('/user/history/:id', authenticateToken, async (req, res) => {
     try {
         const history = await db.any(`
             SELECT 
-            t.user_id,
-            t.transaction_id,
-            u.user_firstname,
-            u.user_email,
-            u.user_phone,
-            t.loan_date,
-            t.due_date,
-            t.return_date,
-            t.item_quantity
+                t.user_id,
+                t.transaction_id,
+                u.user_firstname,
+                u.user_email,
+                u.user_phone,
+                t.loan_date,
+                t.due_date,
+                t.return_date,
+                t.item_quantity,
+                CASE
+                    WHEN t.loan_status = 'deny' THEN 'ถูกยกเลิก'
+                    WHEN t.loan_status = 'cancel' THEN 'ถูกปฏิเสธ'
+                    WHEN t.loan_status = 'pending' THEN 'อยู่ในกระบวนการ'
+                    WHEN t.loan_status = 'approve' THEN 'กำลังยืม'
+                    WHEN t.return_date IS NOT NULL THEN 'คืนแล้ว'
+                    ELSE 'ยังไม่ได้คืน'
+                END AS return_status
             FROM transaction t
             JOIN users u ON t.user_id = u.user_id
             WHERE t.user_id = $1
@@ -2162,14 +2176,12 @@ app.get('/user/history/:id', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Server error' });
     }
 });
-
 app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req, res) => {
     const { user_id, transaction_id } = req.params;
 
     try {
         const history = await db.any(`
-            SELECT
-                r.return_id,
+            SELECT DISTINCT
                 di.item_name,
                 di.item_serial,
                 t.user_id,
@@ -2177,12 +2189,19 @@ app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req,
                 t.loan_date,
                 t.due_date,
                 t.return_date,
-                r.return_status,
+                COALESCE(
+                    CASE 
+                        WHEN l.loan_status IN ('cancel', 'deny') THEN l.loan_status
+                        WHEN l.loan_status = 'complete' THEN r.return_status
+                    END, 'Unknown'
+                ) AS status,
+                r.return_id,
                 r.item_id
-            FROM return_detail r
-            JOIN transaction t ON r.transaction_id = t.transaction_id
-            JOIN device_item di ON r.item_id = di.item_id
-            JOIN users u ON t.user_id = u.user_id
+            FROM transaction t
+            LEFT JOIN device_item di ON di.item_id = (SELECT item_id FROM loan_detail WHERE transaction_id = t.transaction_id LIMIT 1)
+            LEFT JOIN users u ON t.user_id = u.user_id
+            LEFT JOIN loan_detail l ON t.transaction_id = l.transaction_id
+            LEFT JOIN return_detail r ON t.transaction_id = r.transaction_id
             WHERE t.user_id = $1
             AND t.transaction_id = $2
             ORDER BY t.loan_date DESC, t.return_date DESC
@@ -2200,19 +2219,16 @@ app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req,
 });
 
 
-
-
-
-
-
-
-
 app.get('/dashboard', authenticateToken, async (req, res) => {
     try {
         // ดึงจำนวนผู้ใช้ทั้งหมด
         const totalUsers = await db.one('SELECT COUNT(user_id) AS total_users FROM users');
         // ดึงจำนวนอุปกรณ์ทั้งหมด
-        const totalDevices = await db.one('SELECT COUNT(item_id) AS total_devices FROM device_item');
+        const totalDevices = await db.one(`
+    SELECT COUNT(item_id) AS total_devices
+    FROM device_item
+    WHERE item_availability = 'ready'
+`);
         // ดึงจำนวนรายการการยืมที่กำลังดำเนินการอยู่
         const totalTransactions = await db.one(`
             SELECT COUNT(loan_id) AS total_transactions

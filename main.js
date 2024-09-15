@@ -2132,7 +2132,7 @@ app.get('/user/history/:id', authenticateToken, async (req, res) => {
 
     try {
         const history = await db.any(`
-            SELECT DISTINCT 
+            SELECT 
                 t.user_id,
                 t.transaction_id,
                 u.user_firstname,
@@ -2140,13 +2140,9 @@ app.get('/user/history/:id', authenticateToken, async (req, res) => {
                 t.loan_date,
                 t.due_date,
                 t.return_date,
-                t.item_quantity,
-                r.return_status
+                t.item_quantity
             FROM transaction t
             JOIN users u ON t.user_id = u.user_id
-            LEFT JOIN return_detail r ON t.transaction_id = r.transaction_id
-            WHERE t.user_id = $1
-            AND r.return_status IN ('returned', 'lost', 'damaged')
             ORDER BY t.loan_date DESC
         `, [id]);
 
@@ -2156,7 +2152,41 @@ app.get('/user/history/:id', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Server error' });
     }
 });
+app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req, res) => {
+    const { user_id, transaction_id } = req.params;
 
+    try {
+        const history = await db.any(`
+            SELECT
+                r.return_id,
+                di.item_name,
+                di.item_serial,
+                t.user_id,
+                u.user_email,
+                t.loan_date,
+                t.due_date,
+                t.return_date,
+                r.return_status,
+                r.item_id
+            FROM return_detail r
+            JOIN transaction t ON r.transaction_id = t.transaction_id
+            JOIN device_item di ON r.item_id = di.item_id
+            JOIN users u ON t.user_id = u.user_id
+            WHERE t.user_id = $1
+            AND t.transaction_id = $2
+            ORDER BY t.loan_date DESC, t.return_date DESC
+        `, [user_id, transaction_id]);
+
+        if (history.length === 0) {
+            return res.status(404).json({ message: 'อุปกรณ์กำลังอยู่ในกระบวนการถูกยืม' });
+        }
+
+        res.status(200).json(history);
+    } catch (error) {
+        console.error('Error fetching history:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
 
 
 

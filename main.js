@@ -1020,7 +1020,8 @@ app.post('/loan', async (req, res) => {
         const user_id = id;
         const loan_date = new Date();
         const cancelable_until = new Date(loan_date.getTime() + 12 * 60 * 60 * 1000); // 12 ชั่วโมงถัดไป
-
+        console.log(devices)
+        console.log(due_date)
         await db.tx(async t => {
             let totalItemQuantity = 0;
 
@@ -1574,15 +1575,17 @@ app.get('/admin/history', authenticateToken, async (req, res) => {
                 t.return_date,
                 t.item_quantity,
                 CASE
-                    WHEN t.loan_status = 'deny' THEN 'ถูกยกเลิก'
-                    WHEN t.loan_status = 'cancel' THEN 'ถูกปฏิเสธ'
-                    WHEN t.loan_status = 'pending' THEN 'อยู่ในกระบวนการ'
-                    WHEN t.loan_status = 'approve' THEN 'กำลังยืม'
+                    WHEN t.loan_status = 'deny' THEN 'ถูกปฏิเสธ'
+                    WHEN t.loan_status = 'cancel' THEN 'ถูกยกเลิก'
                     WHEN t.return_date IS NOT NULL THEN 'คืนแล้ว'
-                    ELSE 'ยังไม่ได้คืน'
                 END AS return_status
             FROM transaction t
             JOIN users u ON t.user_id = u.user_id
+              AND (
+                t.loan_status = 'deny'
+                OR t.loan_status = 'cancel'
+                OR t.return_date IS NOT NULL
+              )
             ORDER BY t.loan_date DESC
         `);
 
@@ -1609,24 +1612,26 @@ app.get('/admin/history/:user_id/:transaction_id', authenticateToken, async (req
                 t.return_date,
                 COALESCE(
                     CASE 
-                        WHEN l.loan_status IN ('cancel', 'deny') THEN l.loan_status
-                        WHEN l.loan_status = 'complete' THEN r.return_status
+                        WHEN l.loan_status = 'cancel' THEN 'ถูกยกเลิก'
+                        WHEN l.loan_status = 'deny' THEN 'ถูกปฏิเสธ'
+                        WHEN l.loan_status = 'complete' AND r.return_status IS NOT NULL THEN r.return_status
+                        ELSE 'Unknown'
                     END, 'Unknown'
                 ) AS status,
                 r.return_id,
-                r.item_id
+                di.item_id
             FROM transaction t
-            LEFT JOIN device_item di ON di.item_id = (SELECT item_id FROM loan_detail WHERE transaction_id = t.transaction_id LIMIT 1)
-            LEFT JOIN users u ON t.user_id = u.user_id
             LEFT JOIN loan_detail l ON t.transaction_id = l.transaction_id
-            LEFT JOIN return_detail r ON t.transaction_id = r.transaction_id
+            LEFT JOIN return_detail r ON l.item_id = r.item_id AND t.transaction_id = r.transaction_id
+            LEFT JOIN device_item di ON l.item_id = di.item_id
+            LEFT JOIN users u ON t.user_id = u.user_id
             WHERE t.user_id = $1
-            AND t.transaction_id = $2
-            ORDER BY t.loan_date DESC, t.return_date DESC
+              AND t.transaction_id = $2
+            ORDER BY di.item_id, t.loan_date DESC, t.return_date DESC
         `, [user_id, transaction_id]);
 
         if (history.length === 0) {
-            return res.status(404).json({ message: 'อุปกรณ์กำลังอยู่ในกระบวนการถูกยืม' });
+            return res.status(404).json({ message: 'ไม่พบข้อมูลสำหรับผู้ใช้หรือรายการที่ระบุ' });
         }
 
         res.status(200).json(history);
@@ -2137,8 +2142,8 @@ app.get('/loan_detail/borrowed/:user_id', authenticateToken, async (req, res) =>
     }
 });
 // รายการที่ยืมของแต่ละ user
-app.get('/user/history/:id', authenticateToken, async (req, res) => {
-    const { id } = req.params; // ดึง user_id จากพารามิเตอร์ URL
+app.get('/user/history/:user_id', authenticateToken, async (req, res) => {
+    const { user_id } = req.params; // ดึง user_id จากพารามิเตอร์ URL
 
     try {
         const history = await db.any(`
@@ -2153,18 +2158,20 @@ app.get('/user/history/:id', authenticateToken, async (req, res) => {
                 t.return_date,
                 t.item_quantity,
                 CASE
-                    WHEN t.loan_status = 'deny' THEN 'ถูกยกเลิก'
-                    WHEN t.loan_status = 'cancel' THEN 'ถูกปฏิเสธ'
-                    WHEN t.loan_status = 'pending' THEN 'อยู่ในกระบวนการ'
-                    WHEN t.loan_status = 'approve' THEN 'กำลังยืม'
+                    WHEN t.loan_status = 'deny' THEN 'ถูกปฏิเสธ'
+                    WHEN t.loan_status = 'cancel' THEN 'ถูกยกเลิก'
                     WHEN t.return_date IS NOT NULL THEN 'คืนแล้ว'
-                    ELSE 'ยังไม่ได้คืน'
                 END AS return_status
             FROM transaction t
             JOIN users u ON t.user_id = u.user_id
             WHERE t.user_id = $1
+              AND (
+                t.loan_status = 'deny'
+                OR t.loan_status = 'cancel'
+                OR t.return_date IS NOT NULL
+              )
             ORDER BY t.loan_date DESC
-        `, [id]);
+        `, [user_id]);
 
         if (history.length === 0) {
             return res.status(404).json({ message: 'ไม่พบประวัติสำหรับผู้ใช้ที่ระบุ' });
@@ -2191,24 +2198,27 @@ app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req,
                 t.return_date,
                 COALESCE(
                     CASE 
-                        WHEN l.loan_status IN ('cancel', 'deny') THEN l.loan_status
-                        WHEN l.loan_status = 'complete' THEN r.return_status
+                        WHEN l.loan_status = 'cancel' THEN 'ถูกยกเลิก'
+                        WHEN l.loan_status = 'deny' THEN 'ถูกปฏิเสธ'
+                        WHEN l.loan_status = 'borrowed' THEN 'กำลังยืม'
+                        WHEN l.loan_status = 'complete' AND r.return_status IS NOT NULL THEN r.return_status
+                        ELSE 'Unknown'
                     END, 'Unknown'
                 ) AS status,
                 r.return_id,
-                r.item_id
+                di.item_id
             FROM transaction t
-            LEFT JOIN device_item di ON di.item_id = (SELECT item_id FROM loan_detail WHERE transaction_id = t.transaction_id LIMIT 1)
-            LEFT JOIN users u ON t.user_id = u.user_id
             LEFT JOIN loan_detail l ON t.transaction_id = l.transaction_id
-            LEFT JOIN return_detail r ON t.transaction_id = r.transaction_id
+            LEFT JOIN return_detail r ON l.item_id = r.item_id AND t.transaction_id = r.transaction_id
+            LEFT JOIN device_item di ON l.item_id = di.item_id
+            LEFT JOIN users u ON t.user_id = u.user_id
             WHERE t.user_id = $1
-            AND t.transaction_id = $2
-            ORDER BY t.loan_date DESC, t.return_date DESC
+              AND t.transaction_id = $2
+            ORDER BY di.item_id, t.loan_date DESC, t.return_date DESC
         `, [user_id, transaction_id]);
 
         if (history.length === 0) {
-            return res.status(404).json({ message: 'อุปกรณ์กำลังอยู่ในกระบวนการถูกยืม' });
+            return res.status(404).json({ message: 'ไม่พบข้อมูลสำหรับผู้ใช้หรือรายการที่ระบุ' });
         }
 
         res.status(200).json(history);
@@ -2217,7 +2227,6 @@ app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req,
         res.status(500).json({ message: 'Server error' });
     }
 });
-
 
 app.get('/dashboard', authenticateToken, async (req, res) => {
     try {

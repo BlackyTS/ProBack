@@ -1327,7 +1327,7 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
 
             for (const { item_id, return_status } of items) {
                 const transactions = await t.any(
-                    'SELECT transaction_id, user_id FROM loan_detail WHERE item_id = $1 AND return_date IS NULL',
+                    'SELECT transaction_id, user_id, due_date FROM loan_detail WHERE item_id = $1 AND return_date IS NULL',
                     [item_id]
                 );
 
@@ -1340,6 +1340,7 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
 
                 const transaction_id = transactions[0].transaction_id;
                 const transaction_user_id = transactions[0].user_id;
+                const dueDate = new Date(transactions[0].due_date); // เก็บวันที่ครบกำหนด
 
                 const result = await t.one('SELECT COALESCE(MAX(return_id), 0) AS max_id FROM return_detail');
                 const nextId = result.max_id + 1;
@@ -1353,9 +1354,15 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
                     [nextId, transaction_user_id, item_id, return_status, finalPhotoName, returnDate, transaction_id]
                 );
 
+                // ตรวจสอบว่าเกินวันครบกำหนดหรือไม่
+                let loanStatus = 'complete';
+                if (returnDate > dueDate) {
+                    loanStatus = 'overdue';
+                }
+
                 await t.none(
                     'UPDATE loan_detail SET return_date = $1, loan_status = $2, item_availability_status = $3 WHERE item_id = $4 AND return_date IS NULL',
-                    [returnDate, 'complete', 'complete', item_id]
+                    [returnDate, loanStatus, 'complete', item_id]
                 );
 
                 if (return_status == 'returned') {
@@ -1388,7 +1395,7 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
 
                 await t.none(
                     'UPDATE transaction SET return_date = $1, device_photo = $2, loan_status = $3 WHERE transaction_id = $4',
-                    [returnDate, finalPhotoName, 'complete', transaction_id]
+                    [returnDate, finalPhotoName, loanStatus, transaction_id] // อัปเดต loan_status ตามเงื่อนไข
                 );
             }
 
@@ -1634,6 +1641,7 @@ app.get('/admin/history', authenticateToken, async (req, res) => {
                 t.return_date,
                 t.item_quantity,
                 CASE
+                    WHEN t.loan_status = 'overdue' THEN 'คืนเกินกำหนด'
                     WHEN t.loan_status = 'deny' THEN 'ถูกปฏิเสธ'
                     WHEN t.loan_status = 'cancel' THEN 'ถูกยกเลิก'
                     WHEN t.return_date IS NOT NULL THEN 'คืนแล้ว'
@@ -1675,8 +1683,8 @@ app.get('/admin/history/:user_id/:transaction_id', authenticateToken, async (req
                         WHEN l.loan_status = 'deny' THEN 'ถูกปฏิเสธ'
                         WHEN l.loan_status = 'borrowed' THEN 'กำลังยืม'
                         WHEN l.loan_status = 'complete' AND r.return_status IS NOT NULL THEN r.return_status
-                        ELSE 'Unknown'
-                    END, 'Unknown'
+                        ELSE r.return_status
+                    END, r.return_status
                 ) AS status,
                 r.return_id,
                 di.item_id,
@@ -2222,6 +2230,7 @@ app.get('/user/history/:user_id', authenticateToken, async (req, res) => {
                 t.return_date,
                 t.item_quantity,
                 CASE
+                    WHEN t.loan_status = 'overdue' THEN 'คืนเกินกำหนด'
                     WHEN t.loan_status = 'deny' THEN 'ถูกปฏิเสธ'
                     WHEN t.loan_status = 'cancel' THEN 'ถูกยกเลิก'
                     WHEN t.return_date IS NOT NULL THEN 'คืนแล้ว'
@@ -2266,8 +2275,8 @@ app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req,
                         WHEN l.loan_status = 'deny' THEN 'ถูกปฏิเสธ'
                         WHEN l.loan_status = 'borrowed' THEN 'กำลังยืม'
                         WHEN l.loan_status = 'complete' AND r.return_status IS NOT NULL THEN r.return_status
-                        ELSE 'Unknown'
-                    END, 'Unknown'
+                        ELSE r.return_status
+                    END, r.return_status
                 ) AS status,
                 r.return_id,
                 di.item_id,

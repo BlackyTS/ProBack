@@ -30,6 +30,7 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(bodyParser.json());
 app.use(cookieParser());
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 const secret = process.env.JWT_SECRET;
 
@@ -72,9 +73,12 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
-app.get('/', (req,res)=> {
-    res.send('Welcome to Back-end')
-})
+app.get('/', (req, res) => {
+    res.send(`
+        <h1>Welcome</h1>
+        <img src="/uploads/1726513400898.jpg" alt="Test Image"/>
+    `);
+});
 
 // Register
 app.post('/register', async (req, res) => {
@@ -1299,13 +1303,12 @@ app.get('/admin/loan_detail/cancel', authenticateToken, async (req, res) => {
 app.post('/return', authenticateToken, upload.single('device_photo'), async (req, res) => {
     let items;
     let tempPhotoPath;
-    let finalPhotoPath;
+    let finalPhotoName;
 
     try {
         console.log('Request body:', req.body);
         console.log('File info:', req.file);
 
-        // แปลงสตริง JSON เป็นอ็อบเจ็กต์
         items = req.body.items ? JSON.parse(req.body.items) : [];
         tempPhotoPath = req.file ? req.file.path : null;
 
@@ -1341,10 +1344,13 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
                 const result = await t.one('SELECT COALESCE(MAX(return_id), 0) AS max_id FROM return_detail');
                 const nextId = result.max_id + 1;
 
-                // Insert into return_detail with temporary photo path
+                // ใช้ชื่อไฟล์แทนเส้นทาง
+                finalPhotoName = req.file ? req.file.filename : null;
+
+                // Insert into return_detail with only filename
                 await t.none(
                     'INSERT INTO return_detail(return_id, user_id, item_id, return_status, device_photo, return_date, transaction_id) VALUES($1, $2, $3, $4, $5, $6, $7)',
-                    [nextId, transaction_user_id, item_id, return_status, tempPhotoPath ? tempPhotoPath : null, returnDate, transaction_id]
+                    [nextId, transaction_user_id, item_id, return_status, finalPhotoName, returnDate, transaction_id]
                 );
 
                 await t.none(
@@ -1382,7 +1388,7 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
 
                 await t.none(
                     'UPDATE transaction SET return_date = $1, device_photo = $2, loan_status = $3 WHERE transaction_id = $4',
-                    [returnDate, tempPhotoPath ? tempPhotoPath : null, 'complete', transaction_id]
+                    [returnDate, finalPhotoName, 'complete', transaction_id]
                 );
             }
 
@@ -1394,7 +1400,7 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
             }
 
             if (tempPhotoPath) {
-                finalPhotoPath = path.join('uploads', path.basename(tempPhotoPath));
+                const finalPhotoPath = path.join('uploads', finalPhotoName);
                 fs.renameSync(tempPhotoPath, finalPhotoPath);
             }
 
@@ -1667,13 +1673,17 @@ app.get('/admin/history/:user_id/:transaction_id', authenticateToken, async (req
                     CASE 
                         WHEN l.loan_status = 'cancel' THEN 'ถูกยกเลิก'
                         WHEN l.loan_status = 'deny' THEN 'ถูกปฏิเสธ'
+                        WHEN l.loan_status = 'borrowed' THEN 'กำลังยืม'
                         WHEN l.loan_status = 'complete' AND r.return_status IS NOT NULL THEN r.return_status
                         ELSE 'Unknown'
                     END, 'Unknown'
                 ) AS status,
                 r.return_id,
                 di.item_id,
-                r.device_photo
+                CASE 
+                    WHEN r.device_photo IS NOT NULL THEN CONCAT('http://localhost:8000/uploads/', r.device_photo)
+                    ELSE NULL
+                END AS device_photo
             FROM transaction t
             LEFT JOIN loan_detail l ON t.transaction_id = l.transaction_id
             LEFT JOIN return_detail r ON l.item_id = r.item_id AND t.transaction_id = r.transaction_id
@@ -2261,7 +2271,10 @@ app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req,
                 ) AS status,
                 r.return_id,
                 di.item_id,
-                r.device_photo
+                CASE 
+                    WHEN r.device_photo IS NOT NULL THEN CONCAT('http://localhost:8000/uploads/', r.device_photo)
+                    ELSE NULL
+                END AS device_photo
             FROM transaction t
             LEFT JOIN loan_detail l ON t.transaction_id = l.transaction_id
             LEFT JOIN return_detail r ON l.item_id = r.item_id AND t.transaction_id = r.transaction_id
@@ -2276,6 +2289,9 @@ app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req,
             return res.status(404).json({ message: 'ไม่พบข้อมูลสำหรับผู้ใช้หรือรายการที่ระบุ' });
         }
 
+        // ลองพิมพ์ผลลัพธ์เพื่อดูค่า
+        console.log('History:', history);
+
         res.status(200).json(history);
     } catch (error) {
         console.error('Error fetching history:', error);
@@ -2283,16 +2299,21 @@ app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req,
     }
 });
 
+app.get('/uploads/test', (req, res) => {
+    res.send('Uploads directory is working');
+});
+
+
 app.get('/dashboard', authenticateToken, async (req, res) => {
     try {
         // ดึงจำนวนผู้ใช้ทั้งหมด
         const totalUsers = await db.one('SELECT COUNT(user_id) AS total_users FROM users');
         // ดึงจำนวนอุปกรณ์ทั้งหมด
         const totalDevices = await db.one(`
-    SELECT COUNT(item_id) AS total_devices
-    FROM device_item
-    WHERE item_availability = 'ready'
-`);
+            SELECT COUNT(item_id) AS total_devices
+            FROM device_item
+            WHERE item_availability = 'ready'
+        `);
         // ดึงจำนวนรายการการยืมที่กำลังดำเนินการอยู่
         const totalTransactions = await db.one(`
             SELECT COUNT(loan_id) AS total_transactions

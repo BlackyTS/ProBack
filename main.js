@@ -1341,9 +1341,10 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
                 const result = await t.one('SELECT COALESCE(MAX(return_id), 0) AS max_id FROM return_detail');
                 const nextId = result.max_id + 1;
 
+                // Insert into return_detail with temporary photo path
                 await t.none(
                     'INSERT INTO return_detail(return_id, user_id, item_id, return_status, device_photo, return_date, transaction_id) VALUES($1, $2, $3, $4, $5, $6, $7)',
-                    [nextId, transaction_user_id, item_id, return_status, tempPhotoPath ? finalPhotoPath : null, returnDate, transaction_id]
+                    [nextId, transaction_user_id, item_id, return_status, tempPhotoPath ? tempPhotoPath : null, returnDate, transaction_id]
                 );
 
                 await t.none(
@@ -1381,7 +1382,7 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
 
                 await t.none(
                     'UPDATE transaction SET return_date = $1, device_photo = $2, loan_status = $3 WHERE transaction_id = $4',
-                    [returnDate, tempPhotoPath ? finalPhotoPath : null, 'complete', transaction_id]
+                    [returnDate, tempPhotoPath ? tempPhotoPath : null, 'complete', transaction_id]
                 );
             }
 
@@ -1671,7 +1672,8 @@ app.get('/admin/history/:user_id/:transaction_id', authenticateToken, async (req
                     END, 'Unknown'
                 ) AS status,
                 r.return_id,
-                di.item_id
+                di.item_id,
+                r.device_photo
             FROM transaction t
             LEFT JOIN loan_detail l ON t.transaction_id = l.transaction_id
             LEFT JOIN return_detail r ON l.item_id = r.item_id AND t.transaction_id = r.transaction_id
@@ -2258,7 +2260,8 @@ app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req,
                     END, 'Unknown'
                 ) AS status,
                 r.return_id,
-                di.item_id
+                di.item_id,
+                r.device_photo
             FROM transaction t
             LEFT JOIN loan_detail l ON t.transaction_id = l.transaction_id
             LEFT JOIN return_detail r ON l.item_id = r.item_id AND t.transaction_id = r.transaction_id

@@ -141,26 +141,74 @@ app.post('/logout', authenticateToken, (req, res) => {
     });
 });
 // Delete User
-app.delete('/delete', authenticateToken, async (req, res) => {
-    const { id } = req.body;
+app.delete('/delete-user', authenticateToken, async (req, res) => {
+    const { user_id } = req.body; // รับค่า user_id จาก body ของ request
+    console.log(`Delete user_id: ${user_id}`);
+    if (!user_id) {
+        return res.status(400).json({ message: 'กรุณาใส่ user_id' });
+    }
 
     try {
-        // Delete related entries in loan_detail first
-        await db.query('DELETE FROM loan_detail WHERE item_id IN (SELECT item_id FROM device_item WHERE device_id = $1)', [id]);
+        await db.query('DELETE FROM loan_detail WHERE user_id = $1', [user_id]);
 
-        // Then delete from device_item
-        const result = await db.query('DELETE FROM device_item WHERE device_id = $1 RETURNING *', [id]);
-        
+        const result = await db.query('DELETE FROM users WHERE user_id = $1 RETURNING *', [user_id]);
+ 
         if (result.rowCount == 0) {
-            return res.status(404).json({ message: 'Device not found' });
+            return res.status(404).json({ message: `ไม่พบ user_id ${user_id}` });
         }
-        res.status(200).json({ message: 'Device and related data deleted successfully' });
+
+        res.status(200).json({ message: `User_id ${user_id} ถูกลบเรียบร้อยแล้ว` });
     } catch (error) {
         console.error('ERROR:', error);
-        res.status(500).json({ message: 'Error deleting device' });
+        res.status(500).json({ message: 'เกิดข้อผิดพลาดในการลบ user' });
     }
 });
+// เพิ่ม Admin
+app.put('/admin/edit-user', authenticateToken, async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) {
+        return res.status(400).json({ message: 'Please enter email and password' });
+    }
 
+    try {
+        const existingUser = await db.oneOrNone('SELECT * FROM users WHERE user_email = $1', [email]);
+        if (!existingUser) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+        if (existingUser.user_role === 2) {
+            return res.status(400).json({ message: 'This user role cannot be changed to admin.' });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        await db.none('UPDATE users SET user_password = $1, user_role = 2 WHERE user_email = $2', [hashedPassword, email]);
+
+        res.status(200).json({ message: 'User has been updated successfully.' });
+    } catch (error) {
+        console.error('ERROR:', error);
+        res.status(500).json({ message: 'Error updating user' });
+    }
+});
+// ดู list user
+app.get('/admin/list-user',authenticateToken, async (req, res) => {
+        try {
+            const users = await db.any(`
+                SELECT 
+                    user_id,
+                    user_firstname,
+                    user_lastname,
+                    user_email,
+                    user_role,
+                    user_phone
+                FROM users
+                ORDER BY user_id ASC
+            `);
+            res.status(200).json(users);
+        } catch (error) {
+            console.error('Error fetching user list:', error);
+            res.status(500).json({ message: 'Server error' });
+        }
+});    
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // การเพิ่มชุดอุปกรณ์ใหม่
 app.post('/devices/add', authenticateToken, async (req, res) => {

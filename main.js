@@ -175,40 +175,44 @@ app.put('/admin/edit-user', authenticateToken, async (req, res) => {
         if (!existingUser) {
             return res.status(404).json({ message: 'User not found.' });
         }
-        if (existingUser.user_role === 2) {
-            return res.status(400).json({ message: 'This user role cannot be changed to admin.' });
-        }
 
+        const newRole = existingUser.user_role == 2 ? 1 : 2;
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        await db.none('UPDATE users SET user_password = $1, user_role = 2 WHERE user_email = $2', [hashedPassword, email]);
+        await db.none('UPDATE users SET user_password = $1, user_role = $2 WHERE user_email = $3', 
+            [hashedPassword, newRole, email]);
 
-        res.status(200).json({ message: 'User has been updated successfully.' });
+        res.status(200).json({ message: 'User role has been updated successfully.' });
     } catch (error) {
         console.error('ERROR:', error);
         res.status(500).json({ message: 'Error updating user' });
     }
 });
 // ดู list user
-app.get('/admin/list-user',authenticateToken, async (req, res) => {
-        try {
-            const users = await db.any(`
-                SELECT 
-                    user_id,
-                    user_firstname,
-                    user_lastname,
-                    user_email,
-                    user_role,
-                    user_phone
-                FROM users
-                ORDER BY user_id ASC
-            `);
-            res.status(200).json(users);
-        } catch (error) {
-            console.error('Error fetching user list:', error);
-            res.status(500).json({ message: 'Server error' });
-        }
-});    
+app.get('/admin/list-user', authenticateToken, async (req, res) => {
+    try {
+        const users = await db.any(`
+            SELECT 
+                user_id,
+                user_firstname,
+                user_lastname,
+                user_email,
+                CASE 
+                    WHEN user_role = 1 THEN 'user'
+                    WHEN user_role = 2 THEN 'admin'
+                    ELSE 'unknown'
+                END AS user_role, 
+                user_phone
+            FROM users
+            ORDER BY user_id ASC
+        `);
+        res.status(200).json(users);
+    } catch (error) {
+        console.error('Error fetching user list:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // การเพิ่มชุดอุปกรณ์ใหม่
 app.post('/devices/add', authenticateToken, async (req, res) => {
@@ -405,7 +409,7 @@ app.put('/device_item/update', authenticateToken, async (req, res) => {
         }
 
         // เงื่อนไขไม่อนุญาตให้แก้สถานะที่เป็น pending, borrowed
-        if (oldItem.item_availability === 'pending' || oldItem.item_availability === 'borrowed') {
+        if (oldItem.item_availability == 'pending' || oldItem.item_availability == 'borrowed') {
             return res.status(403).json({ message: 'Cannot update the status of an item with status "pending", "borrowed".' });
         }
 
@@ -1305,7 +1309,7 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
         items = req.body.items ? JSON.parse(req.body.items) : [];
         tempPhotoPath = req.file ? req.file.path : null;
 
-        if (!items || !Array.isArray(items) || items.length === 0) {
+        if (!items || !Array.isArray(items) || items.length == 0) {
             if (tempPhotoPath) {
                 fs.unlinkSync(tempPhotoPath);
             }
@@ -1324,7 +1328,7 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
                     [item_id]
                 );
 
-                if (transactions.length === 0) {
+                if (transactions.length == 0) {
                     if (tempPhotoPath) {
                         fs.unlinkSync(tempPhotoPath);
                     }
@@ -1347,7 +1351,7 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
                     [returnDate, 'complete', 'complete', item_id]
                 );
 
-                if (return_status === 'returned') {
+                if (return_status == 'returned') {
                     await t.none(
                         'UPDATE device_item SET item_availability = $1, item_loaning = false WHERE item_id = $2',
                         ['ready', item_id]
@@ -1363,12 +1367,12 @@ app.post('/return', authenticateToken, upload.single('device_photo'), async (req
                     }
 
                     deviceUpdates.set(device_id, deviceUpdates.get(device_id) + 1);
-                } else if (return_status === 'lost') {
+                } else if (return_status == 'lost') {
                     await t.none(
                         'UPDATE device_item SET item_availability = $1, item_loaning = false WHERE item_id = $2',
                         ['lost', item_id]
                     );
-                } else if (return_status === 'damaged') {
+                } else if (return_status == 'damaged') {
                     await t.none(
                         'UPDATE device_item SET item_availability = $1, item_loaning = false WHERE item_id = $2',
                         ['broken', item_id]
@@ -1678,7 +1682,7 @@ app.get('/admin/history/:user_id/:transaction_id', authenticateToken, async (req
             ORDER BY di.item_id, t.loan_date DESC, t.return_date DESC
         `, [user_id, transaction_id]);
 
-        if (history.length === 0) {
+        if (history.length == 0) {
             return res.status(404).json({ message: 'ไม่พบข้อมูลสำหรับผู้ใช้หรือรายการที่ระบุ' });
         }
 
@@ -2221,7 +2225,7 @@ app.get('/user/history/:user_id', authenticateToken, async (req, res) => {
             ORDER BY t.loan_date DESC
         `, [user_id]);
 
-        if (history.length === 0) {
+        if (history.length == 0) {
             return res.status(404).json({ message: 'ไม่พบประวัติสำหรับผู้ใช้ที่ระบุ' });
         }
 
@@ -2265,7 +2269,7 @@ app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req,
             ORDER BY di.item_id, t.loan_date DESC, t.return_date DESC
         `, [user_id, transaction_id]);
 
-        if (history.length === 0) {
+        if (history.length == 0) {
             return res.status(404).json({ message: 'ไม่พบข้อมูลสำหรับผู้ใช้หรือรายการที่ระบุ' });
         }
 

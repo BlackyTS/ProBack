@@ -1681,7 +1681,7 @@ app.get('/admin/history/:user_id/:transaction_id', authenticateToken, async (req
                 r.return_id,
                 di.item_id,
                 CASE 
-                    WHEN r.device_photo IS NOT NULL THEN CONCAT('http://localhost:8000/uploads/', r.device_photo)
+                    WHEN r.device_photo IS NOT NULL THEN CONCAT('http://localhost:8000/uploads/', REPLACE(r.device_photo, 'uploads\\', ''))
                     ELSE NULL
                 END AS device_photo
             FROM transaction t
@@ -1690,7 +1690,7 @@ app.get('/admin/history/:user_id/:transaction_id', authenticateToken, async (req
             LEFT JOIN device_item di ON l.item_id = di.item_id
             LEFT JOIN users u ON t.user_id = u.user_id
             WHERE t.user_id = $1
-              AND t.transaction_id = $2
+            AND t.transaction_id = $2
             ORDER BY di.item_id, t.loan_date DESC, t.return_date DESC
         `, [user_id, transaction_id]);
 
@@ -2272,7 +2272,7 @@ app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req,
                 r.return_id,
                 di.item_id,
                 CASE 
-                    WHEN r.device_photo IS NOT NULL THEN CONCAT('http://localhost:8000/uploads/', r.device_photo)
+                    WHEN r.device_photo IS NOT NULL THEN CONCAT('http://localhost:8000/uploads/', REPLACE(r.device_photo, 'uploads\\', ''))
                     ELSE NULL
                 END AS device_photo
             FROM transaction t
@@ -2281,7 +2281,7 @@ app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req,
             LEFT JOIN device_item di ON l.item_id = di.item_id
             LEFT JOIN users u ON t.user_id = u.user_id
             WHERE t.user_id = $1
-              AND t.transaction_id = $2
+            AND t.transaction_id = $2
             ORDER BY di.item_id, t.loan_date DESC, t.return_date DESC
         `, [user_id, transaction_id]);
 

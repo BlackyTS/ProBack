@@ -1892,14 +1892,25 @@ async function getLoanReturnData() {
             SELECT
                 ROW_NUMBER() OVER (ORDER BY ld.transaction_id) AS transaction_id,
                 ld.user_id,
+                CONCAT(u.user_firstname, ' ', u.user_lastname) AS user_fullname,
                 ld.loan_date,
                 ld.return_date,
                 COUNT(di.item_id) AS item_quantity,
                 STRING_AGG(di.item_serial, ', ') AS device_serial,
-                ld.loan_status AS transaction_status
+                CASE
+                    WHEN ld.loan_status = 'complete' THEN 'คืนแล้ว'
+                    WHEN ld.loan_status = 'deny' THEN 'ถูกปฏิเสธ'
+                    WHEN ld.loan_status = 'cancel' THEN 'ถูกยกเลิก'
+                    WHEN ld.loan_status = 'pending' THEN 'รอดำเนินการ'
+                    WHEN ld.loan_status = 'approve' THEN 'อนุมัติ'
+                    WHEN ld.loan_status = 'borrowed' THEN 'กำลังถูกยืม'
+                    WHEN ld.loan_status = 'overdue' THEN 'คืนเกินกำหนด'
+                    ELSE ld.loan_status
+                END AS transaction_status
             FROM loan_detail ld
             JOIN device_item di ON ld.item_id = di.item_id
-            GROUP BY ld.transaction_id, ld.user_id, ld.loan_date, ld.return_date, ld.loan_status
+            JOIN users u ON ld.user_id = u.user_id
+            GROUP BY ld.transaction_id, ld.user_id, u.user_firstname, u.user_lastname, ld.loan_date, ld.return_date, ld.loan_status
             ORDER BY transaction_id
         `);
         if (result && result.length > 0) {
@@ -1921,7 +1932,14 @@ async function getDeviceData() {
         const result = await db.query(`
             SELECT
                 item_serial,
-                item_availability
+                CASE 
+                    WHEN item_availability = 'ready' THEN 'พร้อมใช้งาน'
+                    WHEN item_availability = 'pending' THEN 'รอดำเนินการ'
+                    WHEN item_availability = 'borrowed' THEN 'กำลังถูกยืม'
+                    WHEN item_availability = 'broken' THEN 'ชำรุด'
+                    WHEN item_availability = 'lost' THEN 'สูญหาย'
+                    ELSE 'ไม่ทราบสถานะ'
+                END AS item_availability
             FROM device_item
         `);
         if (result && result.length > 0) {
@@ -1945,7 +1963,7 @@ async function getDeviceSummary() {
                 COUNT(*) AS total_items,
                 SUM(CASE WHEN item_availability = 'ready' THEN 1 ELSE 0 END) AS ready,
                 SUM(CASE WHEN item_availability = 'broken' THEN 1 ELSE 0 END) AS broken,
-                SUM(CASE WHEN item_availability = 'lost' THEN 1 ELSE 0 END) AS lost
+                SUM(CASE WHEN item_availability = 'lost' THEN 1 ELSE 0 END) AS lost 
             FROM device_item
         `);
         if (result && result.length > 0) {
@@ -1960,21 +1978,22 @@ async function getDeviceSummary() {
         throw error;
     }
 }
-
+// สร้างรูปแบบ excel
 async function generateReport() {
     try {
         const workbook = new ExcelJS.Workbook();
 
-        // หน้า 1: ข้อมูลรายการยืม-คืน
-        const worksheet1 = workbook.addWorksheet('Loan and Return Summary');
+        // หน้า 1: ข้อมูลรายการยืม-คืนทั้งหมด
+        const worksheet1 = workbook.addWorksheet('รายการยืม-คืนทั้งหมด');
         worksheet1.columns = [
-            { header: 'Transaction ID', key: 'transaction_id', width: 20 },
-            { header: 'User ID', key: 'user_id', width: 20 },
-            { header: 'Loan Date', key: 'loan_date', width: 20 },
-            { header: 'Return Date', key: 'return_date', width: 20 },
-            { header: 'Item Quantity', key: 'item_quantity', width: 15 },
-            { header: 'Transaction Status', key: 'transaction_status', width: 20 },
-            { header: 'Device Serial', key: 'device_serial', width: 110 }          
+            { header: 'รหัสรายการ', key: 'transaction_id', width: 20 },
+            { header: 'รหัสผู้ใช้', key: 'user_id', width: 10 },
+            { header: 'ชื่อ-สกุลผู้ยืม', key: 'user_fullname', width: 20 },
+            { header: 'วันที่ยืม', key: 'loan_date', width: 20 },
+            { header: 'วันที่คืน', key: 'return_date', width: 20 },
+            { header: 'จำนวนอุปกรณ์ที่ยืม', key: 'item_quantity', width: 15 },
+            { header: 'สถานะรายการ', key: 'transaction_status', width: 20 },
+            { header: 'อุปกรณ์ที่ยืม', key: 'device_serial', width: 110 }          
         ];
 
         worksheet1.getRow(1).font = { bold: true };
@@ -1988,11 +2007,13 @@ async function generateReport() {
         console.log('Loan Return Data:', loanReturnData);
 
         let totalItemQuantity = 0;
+        let transactionCount = 0;
         if (loanReturnData.length > 0) {
             loanReturnData.forEach(record => {
                 worksheet1.addRow({
                     transaction_id: record.transaction_id,
                     user_id: record.user_id,
+                    user_fullname: record.user_fullname,
                     loan_date: record.loan_date ? new Date(record.loan_date).toLocaleDateString('th-TH') : 'N/A',
                     return_date: record.return_date ? new Date(record.return_date).toLocaleDateString('th-TH') : 'N/A',
                     item_quantity: record.item_quantity,
@@ -2000,51 +2021,115 @@ async function generateReport() {
                     transaction_status: record.transaction_status
                 });
                 totalItemQuantity += parseInt(record.item_quantity) || 0;
+                transactionCount += 1;
             });
             worksheet1.addRow({
-                transaction_id: 'Total',
+                transaction_id: 'จำนวนอุปกรณ์ที่ยืมทั้งหมด',
                 item_quantity: totalItemQuantity
+            }).font = { bold: true };
+            worksheet1.addRow({
+                transaction_id: 'จำนวนรายการทั้งหมด',
+                item_quantity: transactionCount
             }).font = { bold: true };
         } else {
             worksheet1.addRow(['No loan/return data available']);
+        } 
+        
+        // ฟังก์ชันดึงข้อมูลอุปกรณ์ตามสถานะ
+        async function getDeviceByStatus(status) {
+            const result = await db.query(`
+                SELECT item_serial, item_availability 
+                FROM device_item 
+                WHERE item_availability = $1 
+                ORDER BY item_serial
+            `, [status]);
+            return result;
         }
 
-        // หน้า 2: ข้อมูลอุปกรณ์ทั้งหมด
-        const worksheet2 = workbook.addWorksheet('Device Information');
+        // หน้า 2: ข้อมูลอุปกรณ์ที่พร้อมใช้งาน
+        const worksheet2 = workbook.addWorksheet('อุปกรณ์ที่พร้อมใช้งาน');
         worksheet2.columns = [
-            { header: 'Item Serial', key: 'item_serial', width: 30 },
-            { header: 'Item Availability', key: 'item_availability', width: 20 }
+            { header: 'Serial อุปกรณ์', key: 'item_serial', width: 30 },
+            { header: 'สถานะ', key: 'item_availability', width: 20 }
         ];
-
         worksheet2.getRow(1).font = { bold: true };
-        worksheet2.getRow(1).fill = {
-            type: 'pattern',
-            pattern: 'solid',
-            fgColor: { argb: 'FFD3D3D3' }
-        };
-
-        const deviceData = await getDeviceData();
-        console.log('Device Data:', deviceData);
-
-        if (deviceData.length > 0) {
-            deviceData.forEach(record => {
-                worksheet2.addRow({
-                    item_serial: record.item_serial,
-                    item_availability: record.item_availability
-                });
+        const readyDevices = await getDeviceByStatus('ready');
+        readyDevices.forEach(record => {
+            worksheet2.addRow({
+                item_serial: record.item_serial,
+                item_availability: 'พร้อมใช้งาน'
             });
+        });
+        worksheet2.addRow({
+            item_serial: `จำนวนอุปกรณ์ที่พร้อมใช้งานทั้งหมด`,
+            item_availability: readyDevices.length
+        }).font = { bold: true };
 
-            const summary = await getDeviceSummary();
-            console.log('Device Summary:', summary);
+        // หน้า 3: ข้อมูลอุปกรณ์ที่รอดำเนินการ
+        const worksheet3 = workbook.addWorksheet('อุปกรณ์ที่รอดำเนินการ');
+        worksheet3.columns = worksheet2.columns;
+        worksheet3.getRow(1).font = { bold: true };
+        const pendingDevices = await getDeviceByStatus('pending');
+        pendingDevices.forEach(record => {
+            worksheet3.addRow({
+                item_serial: record.item_serial,
+                item_availability: 'รอดำเนินการ'
+            });
+        });
+        worksheet3.addRow({
+            item_serial: `จำนวนอุปกรณ์ที่รอดำเนินการทั้งหมด`,
+            item_availability: pendingDevices.length
+        }).font = { bold: true };
 
-            worksheet2.addRow({ item_serial: 'Total Items', item_availability: summary.total_items }).font = { bold: true };
-            worksheet2.addRow({ item_serial: 'Total Ready', item_availability: summary.ready }).font = { bold: true };
-            worksheet2.addRow({ item_serial: 'Total Broken', item_availability: summary.broken }).font = { bold: true };
-            worksheet2.addRow({ item_serial: 'Total Lost', item_availability: summary.lost }).font = { bold: true };
-        } else {
-            worksheet2.addRow(['No device data available']);
-        }
+        // หน้า 4: ข้อมูลอุปกรณ์ที่กำลังถูกยืม
+        const worksheet4 = workbook.addWorksheet('อุปกรณ์ที่กำลังถูกยืม');
+        worksheet4.columns = worksheet2.columns;
+        worksheet4.getRow(1).font = { bold: true };
+        const borrowedDevices = await getDeviceByStatus('borrowed');
+        borrowedDevices.forEach(record => {
+            worksheet4.addRow({
+                item_serial: record.item_serial,
+                item_availability: 'กำลังถูกยืม'
+            });
+        });
+        worksheet4.addRow({
+            item_serial: `จำนวนอุปกรณ์ที่กำลังถูกยืมทั้งหมด`,
+            item_availability: borrowedDevices.length
+        }).font = { bold: true };
 
+        // หน้า 5: ข้อมูลอุปกรณ์ที่ชำรุด
+        const worksheet5 = workbook.addWorksheet('อุปกรณ์ที่ชำรุด');
+        worksheet5.columns = worksheet2.columns;
+        worksheet5.getRow(1).font = { bold: true };
+        const brokenDevices = await getDeviceByStatus('broken');
+        brokenDevices.forEach(record => {
+            worksheet5.addRow({
+                item_serial: record.item_serial,
+                item_availability: 'ชำรุด'
+            });
+        });
+        worksheet5.addRow({
+            item_serial: `จำนวนอุปกรณ์ที่ชำรุดทั้งหมด`,
+            item_availability: brokenDevices.length
+        }).font = { bold: true };
+
+        // หน้า 6: ข้อมูลอุปกรณ์ที่สูญหาย
+        const worksheet6 = workbook.addWorksheet('อุปกรณ์ที่สูญหาย');
+        worksheet6.columns = worksheet2.columns;
+        worksheet6.getRow(1).font = { bold: true };
+        const lostDevices = await getDeviceByStatus('lost');
+        lostDevices.forEach(record => {
+            worksheet6.addRow({
+                item_serial: record.item_serial,
+                item_availability: 'สูญหาย'
+            });
+        });
+        worksheet6.addRow({
+            item_serial: `จำนวนอุปกรณ์ที่สูญหายทั้งหมด`,
+            item_availability: lostDevices.length
+        }).font = { bold: true };
+
+        // บันทึกไฟล์ Excel
         const today = new Date();
         const dateStr = today.toLocaleDateString('th-TH').split('/').join('-');
         const fileName = `summary_report_${dateStr}.xlsx`;
@@ -2062,6 +2147,7 @@ async function generateReport() {
         throw error;
     }
 }
+
 // Route สำหรับดาวน์โหลดรายงาน
 app.get('/report/download', async (req, res) => {
     try {

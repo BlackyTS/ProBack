@@ -88,7 +88,7 @@ app.post('/register', async (req, res) => {
     
     // กำหนดค่า user_role ตาม duty
     let user_role;
-    if (duty === 'ผู้ดูแล' || duty === 'เจ้าหน้าที่') {
+    if (duty === 'อาจารย์' || duty === 'เจ้าหน้าที่') {
         user_role = 2; 
     } else if (duty === 'นิสิต') {
         user_role = 1;

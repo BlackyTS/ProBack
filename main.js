@@ -85,16 +85,7 @@ app.post('/register', async (req, res) => {
     const { id, email, password, firstname, lastname, phone, duty, faculty, branch } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
     console.log(req.body)
-    
-    // กำหนดค่า user_role ตาม duty
-    let user_role;
-    if (duty === 'อาจารย์' || duty === 'เจ้าหน้าที่') {
-        user_role = 2; 
-    } else if (duty === 'นิสิต') {
-        user_role = 1;
-    }else {
-        user_role = 1;
-    }
+
     try {
         const existingUser = await db.oneOrNone('SELECT * FROM users WHERE user_email = $1', [email]);
 
@@ -104,7 +95,7 @@ app.post('/register', async (req, res) => {
 
         await db.none(
             'INSERT INTO users(user_id, user_email, user_password, user_firstname, user_lastname, user_phone, user_duty, user_role, user_branch, user_faculty) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
-            [id, email, hashedPassword, firstname, lastname, phone, duty, user_role, branch, faculty]
+            [id, email, hashedPassword, firstname, lastname, phone, duty, 1, branch, faculty]
         );
         
         res.status(200).json({ 

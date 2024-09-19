@@ -1,5 +1,5 @@
 const { db } = require('./Config/db'); 
-const { sendLineNotifyReturn } = require('./Function/nontify');
+const { sendLineNotify } = require('./Function/nontify');
 
 // ฟังก์ชันเพื่อจัดรูปแบบวันที่เป็น MM/DD/YY
 const formatDate = (date) => {
@@ -37,7 +37,7 @@ const checkDueDates = async () => {
             if (dueDate <= threeDaysLater && dueDate > today) {
                 const formattedDate = formatDate(dueDate);
                 const message = `User ID: ${loan.user_id} จะต้องคืนอุปกรณ์ก่อนวันที่ ${formattedDate} ก่อนเวลา 16.00 น.`;
-                await sendLineNotifyReturn(message);
+                await sendLineNotify(message);
             }
         }
     } catch (error) {

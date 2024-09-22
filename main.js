@@ -14,6 +14,7 @@ const moment = require('moment-timezone')
 const fetch = require('node-fetch')
 const ExcelJS = require('exceljs');
 const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
+const PDFDocument = require('pdfkit');
 // const { PrismaClient } = require('@prisma/client')
 // const prisma = new PrismaClient()
 
@@ -223,12 +224,24 @@ app.get('/admin/list-user', authenticateToken, async (req, res) => {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // การเพิ่มชุดอุปกรณ์ใหม่
 app.post('/devices/add', authenticateToken, async (req, res) => {
-    const { name, description, limit, serial } = req.body;
+    const { name, description, limit, serial, type } = req.body;
+
+    // ตรวจสอบว่าประเภทอุปกรณ์ถูกต้องหรือไม่
+    const validTypes = [
+        'ครุภัณฑ์ประจำห้องปฏิบัติการ',
+        'วัสดุคงทนถาวรประจำห้องปฏิบัติการ',
+        'วัสดุสิ้นเปลืองประจำห้องปฏิบัติการ'
+    ];
+
+    if (!validTypes.includes(type)) {
+        return res.status(400).json({ message: 'ประเภทอุปกรณ์ไม่ถูกต้อง' });
+    }
+
     try {
         // เพิ่มข้อมูลอุปกรณ์ใหม่
         const result = await db.one(
-            'INSERT INTO device(device_name, device_description, device_limit, device_serial, device_availability) VALUES($1, $2, $3, $4, $5) RETURNING device_id',
-            [name, description, limit, serial, limit]
+            'INSERT INTO device(device_name, device_description, device_limit, device_serial, device_availability, device_type) VALUES($1, $2, $3, $4, $5, $6) RETURNING device_id',
+            [name, description, limit, serial, limit, type]
         );
 
         const deviceId = result.device_id;
@@ -252,8 +265,8 @@ app.post('/devices/add', authenticateToken, async (req, res) => {
             const qrCodeUrl = `data:image/png;base64,${qrCodeBase64}`;
 
             await db.none(
-                'INSERT INTO device_item(item_name, item_description, device_id, item_availability, item_serial, item_qrcode) VALUES($1, $2, $3, $4, $5, $6)',
-                [name, description, deviceId, 'ready', itemSerial, qrCodeUrl]
+                'INSERT INTO device_item(item_name, item_description, device_id, item_availability, item_serial, item_qrcode, item_type) VALUES($1, $2, $3, $4, $5, $6, $7)',
+                [name, description, deviceId, 'ready', itemSerial, qrCodeUrl, type]
             );
         }
         
@@ -2400,6 +2413,136 @@ app.get('/user/history/:user_id/:transaction_id', authenticateToken, async (req,
 app.get('/uploads/test', (req, res) => {
     res.send('Uploads directory is working');
 });
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ประวัติการยืม-คืน pdf
+// ฟังก์ชันสำหรับสร้าง PDF ใบยืม-คืนครุภัณฑ์ ขนาด A4 แนวนอน พร้อมฟอนต์ภาษาไทย
+function generateBorrowReturnForm(filePath) {
+    const doc = new PDFDocument({ size: 'A4', margin: 20 });
+    doc.pipe(fs.createWriteStream(filePath));
+
+    // Use Thai font
+    doc.font('./history-pdf/fonts/TH Niramit AS.ttf');
+
+    // Header
+    doc.fontSize(10).text('CPE-LAB-02', { align: 'left' });
+    doc.text('เลขที่..................................................', { align: 'right' });
+    
+    // Logo (placeholder)
+    doc.image('./history-pdf/logo/ict-up.jpg', doc.page.width / 2 - 30, 40, { width: 60, align: 'center' });
+
+    // Title - ปรับตำแหน่งให้อยู่ใต้โลโก้
+    doc.moveDown(5);  // เพิ่มการเว้นบรรทัดให้มากขึ้น
+    doc.fontSize(16).text('ใบยืม-คืนครุภัณฑ์ประจำห้องปฏิบัติการ', { align: 'center' });
+    doc.fontSize(14).text('อาคารคณะเทคโนโลยีสารสนเทศและการสื่อสาร', { align: 'center' });
+    doc.moveDown();
+
+    // Borrower information
+    doc.fontSize(12);
+    doc.text('ข้าพเจ้า........................................................................ สาขาวิชา........................................................................ คณะ........................................................................');
+    doc.text('ตำแหน่ง..................................................... โทร........................................... หมายเลขเอกสารอ้างอิง (1)............................................ (2)............................................');
+    doc.moveDown();
+
+    // Checkboxes for lab rooms
+    doc.text('ขอยืมครุภัณฑ์ □ ห้องปฏิบัติการระบบเครือข่าย □ ห้องปฏิบัติการระบบดิจิทัลและไมโครโพรเซสเซอร์ □ ห้องปฏิบัติการคอมพิวเตอร์สารสนเทศและการสื่อสาร');
+    doc.text('โดยกำหนดระยะเวลาในการยืม จำนวน........................วัน (กรณีขอขยายระยะเวลา เอกสารเลขที่........................................................) ดังรายการต่อไปนี้');
+    doc.moveDown();
+
+    // Table
+    const startX = 20;
+    const startY = doc.y;
+    const rowHeight = 25;
+    const columnWidths = [30, 140, 100, 70, 70, 140];
+
+    // Table headers (ย้ายเข้าไปในตาราง)
+    doc.fontSize(10);
+    const headers = ['ลำดับที่', 'รายการ', 'หมายเลขครุภัณฑ์', 'วันที่ยืม', 'วันที่คืน', 'หมายเหตุ'];
+
+    // วาดกรอบสำหรับหัวตาราง
+    doc.rect(startX, startY, doc.page.width - 40, rowHeight).stroke();
+
+    headers.forEach((header, i) => {
+    const columnStartX = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0);  // เริ่มตำแหน่งของแต่ละคอลัมน์
+    const columnWidth = columnWidths[i];  // ความกว้างของคอลัมน์
+    
+    // จัดข้อความให้อยู่กลางคอลัมน์
+    doc.text(header, columnStartX, startY + 5, { width: columnWidth, align: 'center' });
+
+    // วาดเส้นแนวตั้งแยกแต่ละคอลัมน์
+    if (i < headers.length - 1) {
+        const x = columnStartX + columnWidth;
+        doc.moveTo(x, startY).lineTo(x, startY + rowHeight).stroke();
+    }
+    });
+
+    // Table rows
+    for (let i = 0; i < 10; i++) {
+        const y = startY + (i + 1) * rowHeight;
+        doc.rect(startX, y, doc.page.width - 40, rowHeight).stroke();
+        doc.text(i + 1, startX, y + 5, { width: columnWidths[0], align: 'center' });
+        for (let j = 1; j < columnWidths.length; j++) {
+            const x = startX + columnWidths.slice(0, j).reduce((a, b) => a + b, 0);
+            doc.moveTo(x, y).lineTo(x, y + rowHeight).stroke();
+        }
+    }
+
+    // Signatures (ปรับตำแหน่งให้อยู่ชิดด้านล่างมากขึ้น)
+    const signatureY = doc.page.height - 200;
+    doc.fontSize(10);
+    doc.text('ลงชื่อ', 50, signatureY);
+    doc.text('ผู้ยืมครุภัณฑ์', 140, signatureY);
+    doc.text('ลงชื่อ', 300, signatureY);
+    doc.text('ผู้คืนครุภัณฑ์', 390, signatureY);
+    doc.text('  (........................................................)', 50, signatureY + 20);
+    doc.text('      วันที่........................................', 50, signatureY + 40);
+    doc.text('  (........................................................)', 300, signatureY + 20);
+    doc.text('      วันที่........................................', 300, signatureY + 40);
+
+    doc.text('ลงชื่อ', 50, signatureY + 70);
+    doc.text('ผู้จ่ายครุภัณฑ์', 140, signatureY + 70);
+    doc.text('ลงชื่อ', 300, signatureY + 70);
+    doc.text('ผู้รับคืนครุภัณฑ์', 390, signatureY + 70);
+    doc.text('  (........................................................)', 50, signatureY + 90);
+    doc.text('      วันที่........................................', 50, signatureY + 110);
+    doc.text('  (........................................................)', 300, signatureY + 90);
+    doc.text('      วันที่........................................', 300, signatureY + 110);
+
+    // Footer
+    doc.fontSize(8).text('ปรับปรุงครั้งที่ 2', doc.page.width - 100, doc.page.height - 30, { align: 'right' });
+
+    doc.end();
+}
+// ฟังก์ชันสร้าง PDF และให้ดาวน์โหลด
+app.get('/download-pdf', (req, res) => {
+    const historyFolder = path.join(__dirname, 'history-pdf');
+    const fileName = `borrow-return-form-${Date.now()}.pdf`;
+    const filePath = path.join(historyFolder, fileName);
+    
+    if (!fs.existsSync(historyFolder)) {
+        fs.mkdirSync(historyFolder);
+    }
+
+    generateBorrowReturnForm(filePath);
+
+    setTimeout(() => {
+        if (fs.existsSync(filePath)) {
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+            res.download(filePath, (err) => {
+                if (err) {
+                    console.error('Error during file download:', err);
+                    res.status(500).send('Error downloading file.');
+                } else {
+                    console.log('File downloaded successfully.');
+                }
+            });
+        } else {
+            res.status(500).send('Error creating PDF file.');
+        }
+    }, 2000);  // รอ 2 วินาทีก่อนที่จะตรวจสอบไฟล์
+});
+
+
+
 
 
 app.get('/dashboard', authenticateToken, async (req, res) => {

@@ -761,7 +761,7 @@ app.get('/admin/loan_detail/complete', authenticateToken, async (req, res) => {
 // ยืนยัน/ปฏิเสธ คำร้องขอ
 const{ sendLineNotifyClaim } = require('./Function/nontify_claim')
 app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
-    const { transaction_id, loan_status, admin_comment, location } = req.body;
+    const { transaction_id, loan_status } = req.body;
     let item_availability_status;
     let confirm_date;
     // กำหนดค่า item_availability_status ตาม loan_status
@@ -810,8 +810,8 @@ app.put('/admin/loan_detail/update', authenticateToken, async (req, res) => {
             }
 
             const result = await t.result(
-                'UPDATE loan_detail SET loan_status = $1, item_availability_status = $2, admin_comment = $3, location_to_loan = $4, due_date = $5 WHERE transaction_id = $6',
-                [loan_status, item_availability_status, admin_comment, location, confirm_date, transaction_id]
+                'UPDATE loan_detail SET loan_status = $1, item_availability_status = $2, due_date = $3 WHERE transaction_id = $4',
+                [loan_status, item_availability_status, confirm_date, transaction_id]
             );
 
             if (result.rowCount == 0) {
@@ -2414,134 +2414,220 @@ app.get('/uploads/test', (req, res) => {
     res.send('Uploads directory is working');
 });
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ประวัติการยืม-คืน pdf
-// ฟังก์ชันสำหรับสร้าง PDF ใบยืม-คืนครุภัณฑ์ ขนาด A4 แนวนอน พร้อมฟอนต์ภาษาไทย
-function generateBorrowReturnForm(filePath) {
-    const doc = new PDFDocument({ size: 'A4', margin: 20 });
-    doc.pipe(fs.createWriteStream(filePath));
+// ประวัติการยืม-คืน pdf //
+// Endpoint สำหรับดึงข้อมูลรายงาน
+app.post('/fetch-report', async (req, res) => {
+    const { user_id, device_type, loan_date } = req.body;
 
-    // Use Thai font
-    doc.font('./history-pdf/fonts/TH Niramit AS.ttf');
+    try {
+        const data = await db.any(`
+            SELECT
+                di.item_name,
+                di.item_serial,
+                ld.loan_date AT TIME ZONE 'Asia/Bangkok' AS loan_date,
+                rd.return_date AT TIME ZONE 'Asia/Bangkok' AS return_date,
+                rd.return_status
+            FROM
+                loan_detail ld
+            JOIN
+                device_item di ON ld.item_id = di.item_id
+            LEFT JOIN
+                return_detail rd ON ld.loan_id = rd.return_id
+            WHERE
+                ld.user_id = $1
+                AND di.item_type = $2
+                AND ld.loan_date AT TIME ZONE 'Asia/Bangkok' BETWEEN $3::DATE AND $3::DATE + INTERVAL '1 DAY'
+        `, [user_id, device_type, loan_date]);
 
-    // Header
-    doc.fontSize(10).text('CPE-LAB-02', { align: 'left' });
-    doc.text('เลขที่..................................................', { align: 'right' });
-    
-    // Logo (placeholder)
-    doc.image('./history-pdf/logo/ict-up.jpg', doc.page.width / 2 - 30, 40, { width: 60, align: 'center' });
-
-    // Title - ปรับตำแหน่งให้อยู่ใต้โลโก้
-    doc.moveDown(5);  // เพิ่มการเว้นบรรทัดให้มากขึ้น
-    doc.fontSize(16).text('ใบยืม-คืนครุภัณฑ์ประจำห้องปฏิบัติการ', { align: 'center' });
-    doc.fontSize(14).text('อาคารคณะเทคโนโลยีสารสนเทศและการสื่อสาร', { align: 'center' });
-    doc.moveDown();
-
-    // Borrower information
-    doc.fontSize(12);
-    doc.text('ข้าพเจ้า........................................................................ สาขาวิชา........................................................................ คณะ........................................................................');
-    doc.text('ตำแหน่ง..................................................... โทร........................................... หมายเลขเอกสารอ้างอิง (1)............................................ (2)............................................');
-    doc.moveDown();
-
-    // Checkboxes for lab rooms
-    doc.text('ขอยืมครุภัณฑ์ □ ห้องปฏิบัติการระบบเครือข่าย □ ห้องปฏิบัติการระบบดิจิทัลและไมโครโพรเซสเซอร์ □ ห้องปฏิบัติการคอมพิวเตอร์สารสนเทศและการสื่อสาร');
-    doc.text('โดยกำหนดระยะเวลาในการยืม จำนวน........................วัน (กรณีขอขยายระยะเวลา เอกสารเลขที่........................................................) ดังรายการต่อไปนี้');
-    doc.moveDown();
-
-    // Table
-    const startX = 20;
-    const startY = doc.y;
-    const rowHeight = 25;
-    const columnWidths = [30, 140, 100, 70, 70, 140];
-
-    // Table headers (ย้ายเข้าไปในตาราง)
-    doc.fontSize(10);
-    const headers = ['ลำดับที่', 'รายการ', 'หมายเลขครุภัณฑ์', 'วันที่ยืม', 'วันที่คืน', 'หมายเหตุ'];
-
-    // วาดกรอบสำหรับหัวตาราง
-    doc.rect(startX, startY, doc.page.width - 40, rowHeight).stroke();
-
-    headers.forEach((header, i) => {
-    const columnStartX = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0);  // เริ่มตำแหน่งของแต่ละคอลัมน์
-    const columnWidth = columnWidths[i];  // ความกว้างของคอลัมน์
-    
-    // จัดข้อความให้อยู่กลางคอลัมน์
-    doc.text(header, columnStartX, startY + 5, { width: columnWidth, align: 'center' });
-
-    // วาดเส้นแนวตั้งแยกแต่ละคอลัมน์
-    if (i < headers.length - 1) {
-        const x = columnStartX + columnWidth;
-        doc.moveTo(x, startY).lineTo(x, startY + rowHeight).stroke();
-    }
-    });
-
-    // Table rows
-    for (let i = 0; i < 10; i++) {
-        const y = startY + (i + 1) * rowHeight;
-        doc.rect(startX, y, doc.page.width - 40, rowHeight).stroke();
-        doc.text(i + 1, startX, y + 5, { width: columnWidths[0], align: 'center' });
-        for (let j = 1; j < columnWidths.length; j++) {
-            const x = startX + columnWidths.slice(0, j).reduce((a, b) => a + b, 0);
-            doc.moveTo(x, y).lineTo(x, y + rowHeight).stroke();
+        if (data.length === 0) {
+            return res.status(404).json({ message: 'ไม่พบข้อมูลการยืม-คืน' });
         }
+
+        return res.status(200).json(data);
+    } catch (error) {
+        console.error('Error fetching report:', error);
+        return res.status(500).json({ message: 'Internal Server Error' });
     }
-
-    // Signatures (ปรับตำแหน่งให้อยู่ชิดด้านล่างมากขึ้น)
-    const signatureY = doc.page.height - 200;
-    doc.fontSize(10);
-    doc.text('ลงชื่อ', 50, signatureY);
-    doc.text('ผู้ยืมครุภัณฑ์', 140, signatureY);
-    doc.text('ลงชื่อ', 300, signatureY);
-    doc.text('ผู้คืนครุภัณฑ์', 390, signatureY);
-    doc.text('  (........................................................)', 50, signatureY + 20);
-    doc.text('      วันที่........................................', 50, signatureY + 40);
-    doc.text('  (........................................................)', 300, signatureY + 20);
-    doc.text('      วันที่........................................', 300, signatureY + 40);
-
-    doc.text('ลงชื่อ', 50, signatureY + 70);
-    doc.text('ผู้จ่ายครุภัณฑ์', 140, signatureY + 70);
-    doc.text('ลงชื่อ', 300, signatureY + 70);
-    doc.text('ผู้รับคืนครุภัณฑ์', 390, signatureY + 70);
-    doc.text('  (........................................................)', 50, signatureY + 90);
-    doc.text('      วันที่........................................', 50, signatureY + 110);
-    doc.text('  (........................................................)', 300, signatureY + 90);
-    doc.text('      วันที่........................................', 300, signatureY + 110);
-
-    // Footer
-    doc.fontSize(8).text('ปรับปรุงครั้งที่ 2', doc.page.width - 100, doc.page.height - 30, { align: 'right' });
-
-    doc.end();
-}
-// ฟังก์ชันสร้าง PDF และให้ดาวน์โหลด
-app.get('/download-pdf', (req, res) => {
-    const historyFolder = path.join(__dirname, 'history-pdf');
-    const fileName = `borrow-return-form-${Date.now()}.pdf`;
-    const filePath = path.join(historyFolder, fileName);
-    
-    if (!fs.existsSync(historyFolder)) {
-        fs.mkdirSync(historyFolder);
-    }
-
-    generateBorrowReturnForm(filePath);
-
-    setTimeout(() => {
-        if (fs.existsSync(filePath)) {
-            res.setHeader('Content-Type', 'application/pdf');
-            res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-            res.download(filePath, (err) => {
-                if (err) {
-                    console.error('Error during file download:', err);
-                    res.status(500).send('Error downloading file.');
-                } else {
-                    console.log('File downloaded successfully.');
-                }
-            });
-        } else {
-            res.status(500).send('Error creating PDF file.');
-        }
-    }, 2000);  // รอ 2 วินาทีก่อนที่จะตรวจสอบไฟล์
 });
 
+// Endpoint สำหรับสร้างรายงาน PDF
+app.get('/generate-report', async (req, res) => {
+    const { user_id, device_type, loan_date } = req.query;
 
+    try {
+        // ดึงข้อมูล loan details และรวมชื่อผู้ใช้
+        const loanDetails = await db.any(`
+            SELECT
+                di.item_name,
+                di.item_serial,
+                ld.loan_date AT TIME ZONE 'Asia/Bangkok' AS loan_date,
+                rd.return_date AT TIME ZONE 'Asia/Bangkok' AS return_date,
+                rd.return_status,
+                CONCAT(u.user_firstname, ' ', u.user_lastname) AS user_name,
+                u.user_faculty,
+                u.user_branch,
+                u.user_duty,
+                u.user_phone
+            FROM
+                loan_detail ld
+            JOIN
+                device_item di ON ld.item_id = di.item_id
+            LEFT JOIN
+                return_detail rd ON ld.loan_id = rd.return_id
+            JOIN
+                users u ON ld.user_id = u.user_id  -- Join with users table to get user details
+            WHERE
+                ld.user_id = $1
+                AND di.item_type = $2
+                AND ld.loan_date AT TIME ZONE 'Asia/Bangkok' BETWEEN $3::DATE AND $3::DATE + INTERVAL '1 DAY'
+        `, [user_id, device_type, loan_date]);
+
+        if (loanDetails.length === 0) {
+            return res.status(404).json({ message: 'No data found' });
+        }
+
+        // ข้อมูลผู้ใช้
+        const user = loanDetails[0];
+        const reportTitle = `ใบยืม-คืน${device_type}-${user_id}-${loan_date}`;
+        const fileName = `${reportTitle}.pdf`; // สร้างชื่อไฟล์จากชื่อรายงาน
+        const filePath = path.join('history-pdf', fileName); // ใช้ชื่อไฟล์เป็นแบบที่กำหนด
+        const doc = new PDFDocument({ size: 'A4', margin: 20 });
+        doc.pipe(fs.createWriteStream(filePath));
+        doc.font('./history-pdf/fonts/TH Niramit AS.ttf');
+
+        // ส่วนหัว
+        doc.fontSize(10).text('CPE-LAB-02', { align: 'left' });
+        doc.text('เลขที่..................................................', { align: 'right' });
+        doc.image('./history-pdf/logo/ict-up.jpg', doc.page.width / 2 - 30, 40, { width: 60, align: 'center' });
+
+        doc.moveDown(5);
+        doc.fontSize(16).text(`ใบยืม-คืน ${device_type}`, { align: 'center' }); // ปรับหัวข้อให้แสดงตามที่ต้องการ
+        doc.fontSize(14).text('อาคารคณะเทคโนโลยีสารสนเทศและการสื่อสาร', { align: 'center' });
+        doc.fontSize(12);
+        doc.text(`ข้าพเจ้า ..........${user.user_name}.......... สาขาวิชา ................${user.user_faculty}................ คณะ ................${user.user_branch}................`);
+        doc.text(`ตำแหน่ง .......${user.user_duty}....... โทร .......${user.user_phone}....... หมายเลขเอกสารอ้างอิง (1).............................................. (2)..............................................`);
+        doc.text('ขอยืมครุภัณฑ์ □ ห้องปฏิบัติการระบบเครือข่าย □ ห้องปฏิบัติการระบบดิจิทัลและไมโครโพรเซสเซอร์ □ ห้องปฏิบัติการคอมพิวเตอร์สารสนเทศและการสื่อสาร');
+        doc.text('โดยกำหนดระยะเวลาในการยืม จำนวน........................วัน (กรณีขอขยายระยะเวลา เอกสารเลขที่........................................................) ดังรายการต่อไปนี้');
+        doc.moveDown();
+        
+        // ตารางข้อมูล
+        const startX = 20;
+        const startY = doc.y;
+        const rowHeight = 20;
+        const columnWidths = [30, 140, 105, 70, 70, 140];
+        const maxRows = 10; // จำนวนแถวสูงสุดที่ต้องการแสดง
+
+        const headers = ['ลำดับที่', 'รายการ', 'หมายเลขครุภัณฑ์', 'วันที่ยืม', 'วันที่คืน', 'หมายเหตุ'];
+        doc.fontSize(10);
+
+        // วาดหัวตารางพร้อมขอบเขต
+        doc.rect(startX, startY, doc.page.width - 40, rowHeight).stroke();
+        headers.forEach((header, i) => {
+            const columnStartX = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0);
+            doc.text(header, columnStartX, startY + 5, { width: columnWidths[i], align: 'center' });
+            // วาดเส้นแบ่งหลังหัวตาราง
+            if (i < headers.length - 1) {
+                const x = columnStartX + columnWidths[i];
+                doc.moveTo(x, startY).lineTo(x, startY + rowHeight).stroke(); // วาดเส้นแนวตั้ง
+            }
+        });
+
+        // วาดตารางข้อมูล
+        const totalRows = Math.min(loanDetails.length, maxRows); // จำนวนแถวจริงที่จะวาด
+        for (let i = 0; i < maxRows; i++) {
+            const y = startY + (i + 1) * rowHeight;
+            
+            // วาดเส้นแนวนอน (แกน x) สำหรับแต่ละแถว
+            doc.moveTo(startX, y).lineTo(doc.page.width - 20, y).stroke(); // เส้นแนวนอน
+            
+            if (i < totalRows) {
+                const loan = loanDetails[i];
+                
+                // วาดข้อมูลในแต่ละช่อง
+                doc.text(i + 1, startX, y + 5, { width: columnWidths[0], align: 'center' });
+                doc.text(loan.item_name, startX + columnWidths[0], y + 5, { width: columnWidths[1], align: 'center' });
+                doc.text(loan.item_serial, startX + columnWidths[0] + columnWidths[1], y + 5, { width: columnWidths[2], align: 'center' });
+                doc.text(new Date(loan.loan_date).toLocaleDateString('th-TH'), startX + columnWidths[0] + columnWidths[1] + columnWidths[2], y + 5, { width: columnWidths[3], align: 'center' });
+                doc.text(loan.return_date ? new Date(loan.return_date).toLocaleDateString('th-TH') : 'ยังไม่คืน', startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3], y + 5, { width: columnWidths[4], align: 'center' });
+
+                // จับคู่สถานะการคืนกับข้อความแสดงผล
+                let returnStatusText;
+                switch (loan.return_status) {
+                    case 'returned':
+                        returnStatusText = 'คืนแล้ว';
+                        break;
+                    case 'lost':
+                        returnStatusText = 'สูญหาย';
+                        break;
+                    case 'damaged':
+                        returnStatusText = 'ชำรุด';
+                        break;
+                    case 'cancel':
+                        returnStatusText = 'ถูกยกเลิก';
+                        break;
+                    case 'deny':
+                        returnStatusText = 'ปฏิเสธ';
+                        break;
+                    default:
+                        returnStatusText = 'ไม่ระบุ';
+                }
+                doc.text(returnStatusText, startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3] + columnWidths[4], y + 5, { width: columnWidths[5], align: 'center' });
+            }
+        }
+
+        // วาดเส้นแนวตั้ง (แกน y)
+        const columnXPositions = [
+            startX, 
+            startX + columnWidths[0], 
+            startX + columnWidths[0] + columnWidths[1], 
+            startX + columnWidths[0] + columnWidths[1] + columnWidths[2], 
+            startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3], 
+            startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3] + columnWidths[4], 
+            startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3] + columnWidths[4] + columnWidths[5] 
+        ];
+        
+        for (let i = 0; i < columnXPositions.length; i++) {
+            doc.moveTo(columnXPositions[i], startY).lineTo(columnXPositions[i], startY + maxRows * rowHeight).stroke(); // เส้นแนวตั้ง
+        }
+
+        // วาดเส้นแนวนอนล่างสุด
+        doc.moveTo(startX, startY + maxRows * rowHeight).lineTo(doc.page.width - 20, startY + maxRows * rowHeight).stroke(); // เส้นล่างสุด
+
+        // Signatures
+        const signatureY = doc.page.height - 200;
+        doc.fontSize(10);
+        doc.text('ลงชื่อ', 50, signatureY);
+        doc.text('ผู้ยืมครุภัณฑ์', 140, signatureY);
+        doc.text('ลงชื่อ', 300, signatureY);
+        doc.text('ผู้คืนครุภัณฑ์', 390, signatureY);
+        doc.text('  (........................................................)', 50, signatureY + 20);
+        doc.text('      วันที่........................................', 50, signatureY + 40);
+        doc.text('  (........................................................)', 300, signatureY + 20);
+        doc.text('      วันที่........................................', 300, signatureY + 40);
+
+        doc.text('ลงชื่อ', 50, signatureY + 70);
+        doc.text('ผู้จ่ายครุภัณฑ์', 140, signatureY + 70);
+        doc.text('ลงชื่อ', 300, signatureY + 70);
+        doc.text('ผู้รับคืนครุภัณฑ์', 390, signatureY + 70);
+        doc.text('  (........................................................)', 50, signatureY + 90);
+        doc.text('      วันที่........................................', 50, signatureY + 110);
+        doc.text('  (........................................................)', 300, signatureY + 90);
+        doc.text('      วันที่........................................', 300, signatureY + 110);
+
+        // Footer
+        doc.fontSize(8).text('ปรับปรุงครั้งที่ 2', doc.page.width - 100, doc.page.height - 30, { align: 'right' });
+
+        doc.end();
+
+        // ส่ง PDF กลับไป
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+        fs.createReadStream(filePath).pipe(res);
+    } catch (error) {
+        console.error('Error generating report:', error);
+        res.status(500).json({ message: 'Error generating report' });
+    }
+});
 
 
 

@@ -2490,7 +2490,14 @@ app.get('/generate-report', async (req, res) => {
         const user = loanDetails[0];
         const reportTitle = `ใบยืม-คืน${device_type}-${user_id}-${loan_date}`;
         const fileName = `${reportTitle}.pdf`; // สร้างชื่อไฟล์จากชื่อรายงาน
-        const filePath = path.join('history-pdf', fileName); // ใช้ชื่อไฟล์เป็นแบบที่กำหนด
+        const dirPath = path.join(__dirname, 'history-pdf'); // สร้างพาธสำหรับโฟลเดอร์
+        const filePath = path.join(dirPath, fileName); // ใช้ชื่อไฟล์เป็นแบบที่กำหนด
+
+        // ตรวจสอบว่าโฟลเดอร์ history-pdf มีอยู่หรือไม่ ถ้าไม่มีก็สร้างใหม่
+        if (!fs.existsSync(dirPath)) {
+            fs.mkdirSync(dirPath, { recursive: true }); // สร้างโฟลเดอร์พร้อมกันหลายชั้นได้
+        }
+
         const doc = new PDFDocument({ size: 'A4', margin: 20 });
         doc.pipe(fs.createWriteStream(filePath));
         doc.font('./history-pdf/fonts/TH Niramit AS.ttf');
@@ -2532,48 +2539,43 @@ app.get('/generate-report', async (req, res) => {
             }
         });
 
-        // วาดตารางข้อมูล
-        const totalRows = Math.min(loanDetails.length, maxRows); // จำนวนแถวจริงที่จะวาด
-        for (let i = 0; i < maxRows; i++) {
-            const y = startY + (i + 1) * rowHeight;
+        // วาดตารางข้อมูลตามจำนวนรายการทั้งหมดใน loanDetails
+        loanDetails.forEach((loan, index) => {
+            const y = startY + (index + 1) * rowHeight;
             
             // วาดเส้นแนวนอน (แกน x) สำหรับแต่ละแถว
             doc.moveTo(startX, y).lineTo(doc.page.width - 20, y).stroke(); // เส้นแนวนอน
             
-            if (i < totalRows) {
-                const loan = loanDetails[i];
-                
-                // วาดข้อมูลในแต่ละช่อง
-                doc.text(i + 1, startX, y + 5, { width: columnWidths[0], align: 'center' });
-                doc.text(loan.item_name, startX + columnWidths[0], y + 5, { width: columnWidths[1], align: 'center' });
-                doc.text(loan.item_serial, startX + columnWidths[0] + columnWidths[1], y + 5, { width: columnWidths[2], align: 'center' });
-                doc.text(new Date(loan.loan_date).toLocaleDateString('th-TH'), startX + columnWidths[0] + columnWidths[1] + columnWidths[2], y + 5, { width: columnWidths[3], align: 'center' });
-                doc.text(loan.return_date ? new Date(loan.return_date).toLocaleDateString('th-TH') : 'ยังไม่คืน', startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3], y + 5, { width: columnWidths[4], align: 'center' });
+            // วาดข้อมูลในแต่ละช่อง
+            doc.text(index + 1, startX, y + 5, { width: columnWidths[0], align: 'center' });
+            doc.text(loan.item_name, startX + columnWidths[0], y + 5, { width: columnWidths[1], align: 'center' });
+            doc.text(loan.item_serial, startX + columnWidths[0] + columnWidths[1], y + 5, { width: columnWidths[2], align: 'center' });
+            doc.text(new Date(loan.loan_date).toLocaleDateString('th-TH'), startX + columnWidths[0] + columnWidths[1] + columnWidths[2], y + 5, { width: columnWidths[3], align: 'center' });
+            doc.text(loan.return_date ? new Date(loan.return_date).toLocaleDateString('th-TH') : 'ยังไม่คืน', startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3], y + 5, { width: columnWidths[4], align: 'center' });
 
-                // จับคู่สถานะการคืนกับข้อความแสดงผล
-                let returnStatusText;
-                switch (loan.return_status) {
-                    case 'returned':
-                        returnStatusText = 'คืนแล้ว';
-                        break;
-                    case 'lost':
-                        returnStatusText = 'สูญหาย';
-                        break;
-                    case 'damaged':
-                        returnStatusText = 'ชำรุด';
-                        break;
-                    case 'cancel':
-                        returnStatusText = 'ถูกยกเลิก';
-                        break;
-                    case 'deny':
-                        returnStatusText = 'ปฏิเสธ';
-                        break;
-                    default:
-                        returnStatusText = 'ไม่ระบุ';
-                }
-                doc.text(returnStatusText, startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3] + columnWidths[4], y + 5, { width: columnWidths[5], align: 'center' });
+            // จับคู่สถานะการคืนกับข้อความแสดงผล
+            let returnStatusText;
+            switch (loan.return_status) {
+                case 'returned':
+                    returnStatusText = 'คืนแล้ว';
+                    break;
+                case 'lost':
+                    returnStatusText = 'สูญหาย';
+                    break;
+                case 'damaged':
+                    returnStatusText = 'ชำรุด';
+                    break;
+                case 'cancel':
+                    returnStatusText = 'ถูกยกเลิก';
+                    break;
+                case 'deny':
+                    returnStatusText = 'ปฏิเสธ';
+                    break;
+                default:
+                    returnStatusText = 'ไม่ระบุ';
             }
-        }
+            doc.text(returnStatusText, startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3] + columnWidths[4], y + 5, { width: columnWidths[5], align: 'center' });
+        });
 
         // วาดเส้นแนวตั้ง (แกน y)
         const columnXPositions = [
@@ -2586,12 +2588,12 @@ app.get('/generate-report', async (req, res) => {
             startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3] + columnWidths[4] + columnWidths[5] 
         ];
         
-        for (let i = 0; i < columnXPositions.length; i++) {
-            doc.moveTo(columnXPositions[i], startY).lineTo(columnXPositions[i], startY + maxRows * rowHeight).stroke(); // เส้นแนวตั้ง
-        }
+        columnXPositions.forEach(x => {
+            doc.moveTo(x, startY).lineTo(x, startY + (loanDetails.length + 1) * rowHeight).stroke(); // เส้นแนวตั้ง
+        });
 
-        // วาดเส้นแนวนอนล่างสุด
-        doc.moveTo(startX, startY + maxRows * rowHeight).lineTo(doc.page.width - 20, startY + maxRows * rowHeight).stroke(); // เส้นล่างสุด
+        // วาดขอบตารางด้านล่างสุด
+        doc.rect(startX, startY, doc.page.width - 40, (loanDetails.length + 1) * rowHeight).stroke();
 
         // Signatures
         const signatureY = doc.page.height - 200;

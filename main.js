@@ -2517,83 +2517,71 @@ app.get('/generate-report', async (req, res) => {
         doc.text('โดยกำหนดระยะเวลาในการยืม จำนวน........................วัน (กรณีขอขยายระยะเวลา เอกสารเลขที่........................................................) ดังรายการต่อไปนี้');
         doc.moveDown();
         
-        // ตารางข้อมูล
+        // ฟังก์ชันสำหรับวาดหัวตาราง
+        function drawTableHeader(doc, startX, startY, columnWidths, rowHeight) {
+            const headers = ['ลำดับที่', 'รายการ', 'หมายเลขครุภัณฑ์', 'วันที่ยืม', 'วันที่คืน', 'หมายเหตุ'];
+            doc.rect(startX, startY, doc.page.width - 40, rowHeight).stroke();
+            headers.forEach((header, i) => {
+                const columnStartX = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0);
+                doc.text(header, columnStartX, startY + 5, { width: columnWidths[i], align: 'center' });
+                // วาดเส้นแนวตั้งสำหรับทุกคอลัมน์
+                doc.moveTo(columnStartX, startY).lineTo(columnStartX, startY + rowHeight).stroke();
+            });
+            // วาดเส้นแนวตั้งสุดท้าย
+            doc.moveTo(startX + doc.page.width - 40, startY).lineTo(startX + doc.page.width - 40, startY + rowHeight).stroke();
+        }
+
+        // ฟังก์ชันสำหรับวาดแถวของข้อมูล
+        function drawTableRow(doc, loan, index, startX, currentY, columnWidths, rowHeight) {
+            doc.rect(startX, currentY, doc.page.width - 40, rowHeight).stroke();
+            columnWidths.forEach((width, i) => {
+                const columnStartX = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0);
+                // วาดเส้นแนวตั้งสำหรับทุกคอลัมน์
+                doc.moveTo(columnStartX, currentY).lineTo(columnStartX, currentY + rowHeight).stroke();
+            });
+            // วาดเส้นแนวตั้งสุดท้าย
+            doc.moveTo(startX + doc.page.width - 40, currentY).lineTo(startX + doc.page.width - 40, currentY + rowHeight).stroke();
+
+            doc.text(index + 1, startX, currentY + 5, { width: columnWidths[0], align: 'center' });
+            doc.text(loan.item_name, startX + columnWidths[0], currentY + 5, { width: columnWidths[1], align: 'center' });
+            doc.text(loan.item_serial, startX + columnWidths[0] + columnWidths[1], currentY + 5, { width: columnWidths[2], align: 'center' });
+            doc.text(new Date(loan.loan_date).toLocaleDateString('th-TH'), startX + columnWidths[0] + columnWidths[1] + columnWidths[2], currentY + 5, { width: columnWidths[3], align: 'center' });
+            doc.text(loan.return_date ? new Date(loan.return_date).toLocaleDateString('th-TH') : 'ยังไม่คืน', startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3], currentY + 5, { width: columnWidths[4], align: 'center' });
+
+            let returnStatusText = 'ไม่ระบุ';
+            switch (loan.return_status) {
+                case 'returned': returnStatusText = 'คืนแล้ว'; break;
+                case 'lost': returnStatusText = 'สูญหาย'; break;
+                case 'damaged': returnStatusText = 'ชำรุด'; break;
+                case 'cancel': returnStatusText = 'ถูกยกเลิก'; break;
+                case 'deny': returnStatusText = 'ปฏิเสธ'; break;
+            }
+            doc.text(returnStatusText, startX + columnWidths.slice(0, 5).reduce((a, b) => a + b, 0), currentY + 5, { width: columnWidths[5], align: 'center' });
+        }
+
+        // ในส่วนของการสร้าง PDF
         const startX = 20;
-        const startY = doc.y;
+        let startY = 200; 
         const rowHeight = 20;
         const columnWidths = [30, 140, 105, 70, 70, 140];
-        const maxRows = 10; // จำนวนแถวสูงสุดที่ต้องการแสดง
 
-        const headers = ['ลำดับที่', 'รายการ', 'หมายเลขครุภัณฑ์', 'วันที่ยืม', 'วันที่คืน', 'หมายเหตุ'];
-        doc.fontSize(10);
+        drawTableHeader(doc, startX, startY, columnWidths, rowHeight);
+        let currentY = startY + rowHeight;
 
-        // วาดหัวตารางพร้อมขอบเขต
-        doc.rect(startX, startY, doc.page.width - 40, rowHeight).stroke();
-        headers.forEach((header, i) => {
-            const columnStartX = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0);
-            doc.text(header, columnStartX, startY + 5, { width: columnWidths[i], align: 'center' });
-            // วาดเส้นแบ่งหลังหัวตาราง
-            if (i < headers.length - 1) {
-                const x = columnStartX + columnWidths[i];
-                doc.moveTo(x, startY).lineTo(x, startY + rowHeight).stroke(); // วาดเส้นแนวตั้ง
-            }
-        });
-
-        // วาดตารางข้อมูลตามจำนวนรายการทั้งหมดใน loanDetails
         loanDetails.forEach((loan, index) => {
-            const y = startY + (index + 1) * rowHeight;
-            
-            // วาดเส้นแนวนอน (แกน x) สำหรับแต่ละแถว
-            doc.moveTo(startX, y).lineTo(doc.page.width - 20, y).stroke(); // เส้นแนวนอน
-            
-            // วาดข้อมูลในแต่ละช่อง
-            doc.text(index + 1, startX, y + 5, { width: columnWidths[0], align: 'center' });
-            doc.text(loan.item_name, startX + columnWidths[0], y + 5, { width: columnWidths[1], align: 'center' });
-            doc.text(loan.item_serial, startX + columnWidths[0] + columnWidths[1], y + 5, { width: columnWidths[2], align: 'center' });
-            doc.text(new Date(loan.loan_date).toLocaleDateString('th-TH'), startX + columnWidths[0] + columnWidths[1] + columnWidths[2], y + 5, { width: columnWidths[3], align: 'center' });
-            doc.text(loan.return_date ? new Date(loan.return_date).toLocaleDateString('th-TH') : 'ยังไม่คืน', startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3], y + 5, { width: columnWidths[4], align: 'center' });
-
-            // จับคู่สถานะการคืนกับข้อความแสดงผล
-            let returnStatusText;
-            switch (loan.return_status) {
-                case 'returned':
-                    returnStatusText = 'คืนแล้ว';
-                    break;
-                case 'lost':
-                    returnStatusText = 'สูญหาย';
-                    break;
-                case 'damaged':
-                    returnStatusText = 'ชำรุด';
-                    break;
-                case 'cancel':
-                    returnStatusText = 'ถูกยกเลิก';
-                    break;
-                case 'deny':
-                    returnStatusText = 'ปฏิเสธ';
-                    break;
-                default:
-                    returnStatusText = 'ไม่ระบุ';
+            if (currentY + rowHeight > doc.page.height - 150) {
+                doc.addPage();
+                currentY = 50;
+                drawTableHeader(doc, startX, currentY, columnWidths, rowHeight);
+                currentY += rowHeight;
             }
-            doc.text(returnStatusText, startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3] + columnWidths[4], y + 5, { width: columnWidths[5], align: 'center' });
+
+            drawTableRow(doc, loan, index, startX, currentY, columnWidths, rowHeight);
+            currentY += rowHeight;
         });
 
-        // วาดเส้นแนวตั้ง (แกน y)
-        const columnXPositions = [
-            startX, 
-            startX + columnWidths[0], 
-            startX + columnWidths[0] + columnWidths[1], 
-            startX + columnWidths[0] + columnWidths[1] + columnWidths[2], 
-            startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3], 
-            startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3] + columnWidths[4], 
-            startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3] + columnWidths[4] + columnWidths[5] 
-        ];
-        
-        columnXPositions.forEach(x => {
-            doc.moveTo(x, startY).lineTo(x, startY + (loanDetails.length + 1) * rowHeight).stroke(); // เส้นแนวตั้ง
-        });
-
-        // วาดขอบตารางด้านล่างสุด
-        doc.rect(startX, startY, doc.page.width - 40, (loanDetails.length + 1) * rowHeight).stroke();
+        // วาดเส้นขอบล่างสุดของตาราง
+        doc.moveTo(startX, currentY).lineTo(startX + doc.page.width - 40, currentY).stroke();
 
         // Signatures
         const signatureY = doc.page.height - 200;

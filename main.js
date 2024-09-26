@@ -2508,7 +2508,7 @@ app.get('/generate-report', async (req, res) => {
         doc.image('./history-pdf/logo/ict-up.jpg', doc.page.width / 2 - 30, 40, { width: 60, align: 'center' });
 
         doc.moveDown(5);
-        doc.fontSize(16).text(`ใบยืม-คืน ${device_type}`, { align: 'center' }); // ปรับหัวข้อให้แสดงตามที่ต้องการ
+        doc.fontSize(16).text(`ใบยืม-คืน${device_type}`, { align: 'center' }); // ปรับหัวข้อให้แสดงตามที่ต้องการ
         doc.fontSize(14).text('อาคารคณะเทคโนโลยีสารสนเทศและการสื่อสาร', { align: 'center' });
         doc.fontSize(12);
         doc.text(`ข้าพเจ้า ..........${user.user_name}.......... สาขาวิชา ................${user.user_faculty}................ คณะ ................${user.user_branch}................`);

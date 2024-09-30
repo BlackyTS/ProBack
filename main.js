@@ -224,9 +224,8 @@ app.get('/admin/list-user', authenticateToken, async (req, res) => {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // การเพิ่มชุดอุปกรณ์ใหม่
 app.post('/devices/add', authenticateToken, async (req, res) => {
-    const { name, description, limit, serial, type } = req.body;
+    const { name, description, limit, serial, type, brand, model, location, responsible } = req.body;
 
-    // ตรวจสอบว่าประเภทอุปกรณ์ถูกต้องหรือไม่
     const validTypes = [
         'ครุภัณฑ์ประจำห้องปฏิบัติการ',
         'วัสดุคงทนถาวรประจำห้องปฏิบัติการ',
@@ -238,13 +237,25 @@ app.post('/devices/add', authenticateToken, async (req, res) => {
     }
 
     try {
-        // เพิ่มข้อมูลอุปกรณ์ใหม่
         const result = await db.one(
-            'INSERT INTO device(device_name, device_description, device_limit, device_serial, device_availability, device_type) VALUES($1, $2, $3, $4, $5, $6) RETURNING device_id',
-            [name, description, limit, serial, limit, type]
+            `INSERT INTO device(
+                device_name, 
+                device_description, 
+                device_limit, 
+                device_serial, 
+                device_availability, 
+                device_type, 
+                device_brand, 
+                device_model, 
+                device_location, 
+                device_responsible
+            ) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
+            RETURNING device_id`,
+            [name, description, limit, serial, limit, type, brand, model, location, responsible]
         );
 
         const deviceId = result.device_id;
+
         // สร้างโฟลเดอร์สำหรับ QR Code ในโฟลเดอร์ qrcodes
         const qrCodeDir = path.join(__dirname, 'qrcodes', serial);
         if (!fs.existsSync(qrCodeDir)) {
@@ -252,12 +263,20 @@ app.post('/devices/add', authenticateToken, async (req, res) => {
         }
 
         for (let i = 1; i <= limit; i++) {
-            const itemSerial = `${serial}/${i}`;
-            const qrCodeData = `${itemSerial}`; // ข้อมูลที่ใช้ใน QR Code
-            
+            const itemSerial = `${serial}-${i}`;
+            const qrCodeData = `${itemSerial}`;
+
+            // สร้างโฟลเดอร์ย่อยสำหรับแต่ละลำดับ (เช่น 58)
+            const subFolderDir = path.join(qrCodeDir, `${i}`);
+            if (!fs.existsSync(subFolderDir)) {
+                fs.mkdirSync(subFolderDir, { recursive: true });
+            }
+
+            // สร้างชื่อไฟล์แบบ no.x เช่น no.1, no.2
+            const qrCodeFileName = `no.${i}.png`;
+            const qrCodeFilePath = path.join(subFolderDir, qrCodeFileName);
+
             // สร้าง QR Code และบันทึกเป็นไฟล์
-            const qrCodeFileName = `${serial}-${i}.png`;
-            const qrCodeFilePath = path.join(qrCodeDir, qrCodeFileName);
             await QRCode.toFile(qrCodeFilePath, qrCodeData);
 
             // อ่านไฟล์ QR Code เป็น base64
@@ -265,11 +284,19 @@ app.post('/devices/add', authenticateToken, async (req, res) => {
             const qrCodeUrl = `data:image/png;base64,${qrCodeBase64}`;
 
             await db.none(
-                'INSERT INTO device_item(item_name, item_description, device_id, item_availability, item_serial, item_qrcode, item_type) VALUES($1, $2, $3, $4, $5, $6, $7)',
+                `INSERT INTO device_item(
+                    item_name, 
+                    item_description, 
+                    device_id, 
+                    item_availability, 
+                    item_serial, 
+                    item_qrcode, 
+                    item_type
+                ) VALUES($1, $2, $3, $4, $5, $6, $7)`,
                 [name, description, deviceId, 'ready', itemSerial, qrCodeUrl, type]
             );
         }
-        
+
         res.status(200).json({ message: 'Device and items added successfully with QR codes' });
     } catch (error) {
         console.error('ERROR:', error);

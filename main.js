@@ -2029,14 +2029,14 @@ async function generateReport() {
         // หน้า 1: ข้อมูลรายการยืม-คืนทั้งหมด
         const worksheet1 = workbook.addWorksheet('รายการยืม-คืนทั้งหมด');
         worksheet1.columns = [
-            { header: 'รหัสรายการ', key: 'transaction_id', width: 20 },
+            { header: 'รหัสรายการ', key: 'transaction_id', width: 15 },
             { header: 'รหัสผู้ใช้', key: 'user_id', width: 10 },
             { header: 'ชื่อ-สกุลผู้ยืม', key: 'user_fullname', width: 20 },
-            { header: 'วันที่ยืม', key: 'loan_date', width: 20 },
-            { header: 'วันที่คืน', key: 'return_date', width: 20 },
-            { header: 'จำนวนอุปกรณ์ที่ยืม', key: 'item_quantity', width: 15 },
-            { header: 'สถานะรายการ', key: 'transaction_status', width: 20 },
-            { header: 'อุปกรณ์ที่ยืม', key: 'device_serial', width: 110 }          
+            { header: 'วันที่ยืม', key: 'loan_date', width: 15 },
+            { header: 'วันที่คืน', key: 'return_date', width: 15 },
+            { header: 'จำนวนอุปกรณ์ที่ยืม', key: 'item_quantity', width: 25 },
+            { header: 'สถานะรายการ', key: 'transaction_status', width: 15 },
+            { header: 'อุปกรณ์ที่ยืม', key: 'device_serial', width: 200 }          
         ];
 
         worksheet1.getRow(1).font = { bold: true };
@@ -2081,10 +2081,11 @@ async function generateReport() {
         // ฟังก์ชันดึงข้อมูลอุปกรณ์ตามสถานะ
         async function getDeviceByStatus(status) {
             const result = await db.query(`
-                SELECT item_serial, item_availability 
-                FROM device_item 
-                WHERE item_availability = $1 
-                ORDER BY item_serial
+                SELECT di.item_serial, di.item_availability, d.device_name, d.device_brand, d.device_model, d.device_location, d.device_responsible
+                FROM device_item di
+                JOIN device d ON di.device_id = d.device_id
+                WHERE di.item_availability = $1 
+                ORDER BY di.item_serial
             `, [status]);
             return result;
         }
@@ -2092,7 +2093,12 @@ async function generateReport() {
         // หน้า 2: ข้อมูลอุปกรณ์ที่พร้อมใช้งาน
         const worksheet2 = workbook.addWorksheet('อุปกรณ์ที่พร้อมใช้งาน');
         worksheet2.columns = [
-            { header: 'Serial อุปกรณ์', key: 'item_serial', width: 30 },
+            { header: 'ชื่อครุภัณฑ์', key: 'device_name', width: 20 },
+            { header: 'หมายเลขครุภัณฑ์', key: 'item_serial', width: 30 },
+            { header: 'ยี่ห้อ', key: 'device_brand', width: 20 },
+            { header: 'รุ่น/โมเดล', key: 'device_model', width: 20 },
+            { header: 'สถานที่ใช้งาน', key: 'device_location', width: 20 },
+            { header: 'ชื่อผู้รับผิดชอบ', key: 'device_responsible', width: 20 },
             { header: 'สถานะ', key: 'item_availability', width: 20 }
         ];
         worksheet2.getRow(1).font = { bold: true };
@@ -2100,6 +2106,11 @@ async function generateReport() {
         readyDevices.forEach(record => {
             worksheet2.addRow({
                 item_serial: record.item_serial,
+                device_name: record.device_name,
+                device_brand: record.device_brand,
+                device_model: record.device_model,
+                device_location: record.device_location,
+                device_responsible: record.device_responsible,
                 item_availability: 'พร้อมใช้งาน'
             });
         });
@@ -2107,6 +2118,13 @@ async function generateReport() {
             item_serial: `จำนวนอุปกรณ์ที่พร้อมใช้งานทั้งหมด`,
             item_availability: readyDevices.length
         }).font = { bold: true };
+
+        // จัดตำแหน่งข้อมูลให้อยู่ตรงกลางใน worksheet2
+        worksheet2.eachRow((row, rowNumber) => {
+            row.eachCell((cell, colNumber) => {
+                cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            });
+        });
 
         // หน้า 3: ข้อมูลอุปกรณ์ที่รอดำเนินการ
         const worksheet3 = workbook.addWorksheet('อุปกรณ์ที่รอดำเนินการ');
@@ -2116,6 +2134,11 @@ async function generateReport() {
         pendingDevices.forEach(record => {
             worksheet3.addRow({
                 item_serial: record.item_serial,
+                device_name: record.device_name,
+                device_brand: record.device_brand,
+                device_model: record.device_model,
+                device_location: record.device_location,
+                device_responsible: record.device_responsible,
                 item_availability: 'รอดำเนินการ'
             });
         });
@@ -2123,6 +2146,13 @@ async function generateReport() {
             item_serial: `จำนวนอุปกรณ์ที่รอดำเนินการทั้งหมด`,
             item_availability: pendingDevices.length
         }).font = { bold: true };
+
+        // จัดตำแหน่งข้อมูลให้อยู่ตรงกลางใน worksheet3
+        worksheet3.eachRow((row, rowNumber) => {
+            row.eachCell((cell, colNumber) => {
+                cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            });
+        });
 
         // หน้า 4: ข้อมูลอุปกรณ์ที่กำลังถูกยืม
         const worksheet4 = workbook.addWorksheet('อุปกรณ์ที่กำลังถูกยืม');
@@ -2132,6 +2162,11 @@ async function generateReport() {
         borrowedDevices.forEach(record => {
             worksheet4.addRow({
                 item_serial: record.item_serial,
+                device_name: record.device_name,
+                device_brand: record.device_brand,
+                device_model: record.device_model,
+                device_location: record.device_location,
+                device_responsible: record.device_responsible,
                 item_availability: 'กำลังถูกยืม'
             });
         });
@@ -2139,6 +2174,13 @@ async function generateReport() {
             item_serial: `จำนวนอุปกรณ์ที่กำลังถูกยืมทั้งหมด`,
             item_availability: borrowedDevices.length
         }).font = { bold: true };
+
+        // จัดตำแหน่งข้อมูลให้อยู่ตรงกลางใน worksheet4
+        worksheet4.eachRow((row, rowNumber) => {
+            row.eachCell((cell, colNumber) => {
+                cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            });
+        });
 
         // หน้า 5: ข้อมูลอุปกรณ์ที่ชำรุด
         const worksheet5 = workbook.addWorksheet('อุปกรณ์ที่ชำรุด');
@@ -2148,6 +2190,11 @@ async function generateReport() {
         brokenDevices.forEach(record => {
             worksheet5.addRow({
                 item_serial: record.item_serial,
+                device_name: record.device_name,
+                device_brand: record.device_brand,
+                device_model: record.device_model,
+                device_location: record.device_location,
+                device_responsible: record.device_responsible,
                 item_availability: 'ชำรุด'
             });
         });
@@ -2155,6 +2202,13 @@ async function generateReport() {
             item_serial: `จำนวนอุปกรณ์ที่ชำรุดทั้งหมด`,
             item_availability: brokenDevices.length
         }).font = { bold: true };
+
+        // จัดตำแหน่งข้อมูลให้อยู่ตรงกลางใน worksheet5
+        worksheet5.eachRow((row, rowNumber) => {
+            row.eachCell((cell, colNumber) => {
+                cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            });
+        });
 
         // หน้า 6: ข้อมูลอุปกรณ์ที่สูญหาย
         const worksheet6 = workbook.addWorksheet('อุปกรณ์ที่สูญหาย');
@@ -2164,6 +2218,11 @@ async function generateReport() {
         lostDevices.forEach(record => {
             worksheet6.addRow({
                 item_serial: record.item_serial,
+                device_name: record.device_name,
+                device_brand: record.device_brand,
+                device_model: record.device_model,
+                device_location: record.device_location,
+                device_responsible: record.device_responsible,
                 item_availability: 'สูญหาย'
             });
         });
@@ -2171,6 +2230,87 @@ async function generateReport() {
             item_serial: `จำนวนอุปกรณ์ที่สูญหายทั้งหมด`,
             item_availability: lostDevices.length
         }).font = { bold: true };
+
+        // จัดตำแหน่งข้อมูลให้อยู่ตรงกลางใน worksheet6
+        worksheet6.eachRow((row, rowNumber) => {
+            row.eachCell((cell, colNumber) => {
+                cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            });
+        });
+        
+        // ฟังก์ชันดึงข้อมูลอุปกรณ์ตามประเภท
+        async function getDeviceByType(type) {
+            const result = await db.query(`
+                SELECT di.item_serial, d.device_name, d.device_brand, d.device_model, d.device_location, d.device_responsible
+                FROM device_item di
+                JOIN device d ON di.device_id = d.device_id
+                WHERE d.device_type = $1 
+                ORDER BY di.item_serial
+            `, [type]);
+            return result;
+        }
+
+        // ฟังก์ชันสำหรับการเพิ่มคอลัมน์ทั่วไป
+        function setupCommonColumns(worksheet) {
+            worksheet.columns = [
+                { header: 'ลำดับ', key: 'index', width: 10 },
+                { header: 'ชื่อครุภัณฑ์', key: 'device_name', width: 30 },
+                { header: 'หมายเลขครุภัณฑ์', key: 'item_serial', width: 30 },
+                { header: 'ยี่ห้อ', key: 'device_brand', width: 20 },
+                { header: 'รุ่น/โมเดล', key: 'device_model', width: 20 },
+                { header: 'สถานที่ใช้งาน', key: 'device_location', width: 20 },
+                { header: 'ชื่อผู้รับผิดชอบ', key: 'device_responsible', width: 20 }
+            ];
+            worksheet.getRow(1).font = { bold: true };
+        }
+
+        // หน้า: อุปกรณ์ประเภทครุภัณฑ์ประจำห้องปฏิบัติการ
+        const worksheetLabDevice = workbook.addWorksheet('ครุภัณฑ์ประจำห้องปฏิบัติการ');
+        setupCommonColumns(worksheetLabDevice);
+        const labDevices = await getDeviceByType('ครุภัณฑ์ประจำห้องปฏิบัติการ');
+        labDevices.forEach((record, index) => {
+            worksheetLabDevice.addRow({
+                index: index + 1,
+                device_name: record.device_name,
+                item_serial: record.item_serial,
+                device_brand: record.device_brand,
+                device_model: record.device_model,
+                device_location: record.device_location,
+                device_responsible: record.device_responsible
+            });
+        });
+
+        // หน้า: อุปกรณ์ประเภทวัสดุคงทนถาวรประจำห้องปฏิบัติการ
+        const worksheetDurable = workbook.addWorksheet('วัสดุคงทนถาวรประจำห้องปฏิบัติการ');
+        setupCommonColumns(worksheetDurable);
+        const durableDevices = await getDeviceByType('วัสดุคงทนถาวรประจำห้องปฏิบัติการ');
+        durableDevices.forEach((record, index) => {
+            worksheetDurable.addRow({
+                index: index + 1,
+                device_name: record.device_name,
+                item_serial: record.item_serial,
+                device_brand: record.device_brand,
+                device_model: record.device_model,
+                device_location: record.device_location,
+                device_responsible: record.device_responsible
+            });
+        });
+
+        // หน้า: อุปกรณ์ประเภทวัสดุสิ้นเปลืองประจำห้องปฏิบัติการ
+        const worksheetConsumable = workbook.addWorksheet('วัสดุสิ้นเปลืองประจำห้องปฏิบัติการ');
+        setupCommonColumns(worksheetConsumable);
+        const consumableDevices = await getDeviceByType('วัสดุสิ้นเปลืองประจำห้องปฏิบัติการ');
+        consumableDevices.forEach((record, index) => {
+            worksheetConsumable.addRow({
+                index: index + 1,
+                device_name: record.device_name,
+                item_serial: record.item_serial,
+                device_brand: record.device_brand,
+                device_model: record.device_model,
+                device_location: record.device_location,
+                device_responsible: record.device_responsible
+            });
+        });
 
         // บันทึกไฟล์ Excel
         const today = new Date();

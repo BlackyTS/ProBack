@@ -2691,10 +2691,12 @@ app.get('/generate-report', async (req, res) => {
         doc.fontSize(16).text(`ใบยืม-คืน${device_type}`, { align: 'center' }); // ปรับหัวข้อให้แสดงตามที่ต้องการ
         doc.fontSize(14).text('อาคารคณะเทคโนโลยีสารสนเทศและการสื่อสาร', { align: 'center' });
         doc.fontSize(12);
-        doc.text(`ข้าพเจ้า ..........${user.user_name}.......... สาขาวิชา ................${user.user_faculty}................ คณะ ................${user.user_branch}................`);
+        doc.text(`ข้าพเจ้า ..........${user.user_name}.......... สาขาวิชา ................${user.user_branch}................ คณะ ................${user.user_faculty}................`);
         doc.text(`ตำแหน่ง .......${user.user_duty}....... โทร .......${user.user_phone}....... หมายเลขเอกสารอ้างอิง (1).............................................. (2)..............................................`);
         doc.text('ขอยืมครุภัณฑ์ □ ห้องปฏิบัติการระบบเครือข่าย □ ห้องปฏิบัติการระบบดิจิทัลและไมโครโพรเซสเซอร์ □ ห้องปฏิบัติการคอมพิวเตอร์สารสนเทศและการสื่อสาร');
         doc.text('โดยกำหนดระยะเวลาในการยืม จำนวน........................วัน (กรณีขอขยายระยะเวลา เอกสารเลขที่........................................................) ดังรายการต่อไปนี้');
+        doc.fillColor('red').text('***หมายเหตุ แถวที่มีอักษรเป็นสีแดง หมายถึง อุปกรณ์ตัวนั้นคืนเกินกำหนด***');
+        doc.fillColor('black');
         doc.moveDown();
         
         // ฟังก์ชันสำหรับวาดหัวตาราง
@@ -2722,6 +2724,12 @@ app.get('/generate-report', async (req, res) => {
             // วาดเส้นแนวตั้งสุดท้าย
             doc.moveTo(startX + doc.page.width - 40, currentY).lineTo(startX + doc.page.width - 40, currentY + rowHeight).stroke();
 
+            if (loan.loan_status === 'overdue') {
+                doc.fillColor('red');
+            } else {
+                doc.fillColor('black');
+            }
+
             doc.text(index + 1, startX, currentY + 5, { width: columnWidths[0], align: 'center' });
             doc.text(loan.item_name, startX + columnWidths[0], currentY + 5, { width: columnWidths[1], align: 'center' });
             doc.text(loan.item_serial, startX + columnWidths[0] + columnWidths[1], currentY + 5, { width: columnWidths[2], align: 'center' });
@@ -2739,9 +2747,6 @@ app.get('/generate-report', async (req, res) => {
                         break;
                     case 'borrowed': 
                         returnStatusText = 'กำลังยืม'; 
-                        break;
-                    case 'overdue': 
-                        returnStatusText = 'คืนเกินกำหนด'; 
                         break;
                     default: 
                         // ถ้าไม่ตรงกับเงื่อนไขใน loan_status ก็ให้เช็ค return_status ต่อไป
@@ -2798,6 +2803,7 @@ app.get('/generate-report', async (req, res) => {
                     returnStatusText = 'ไม่ระบุ'; // ถ้าไม่มีสถานะใน return_status เลยก็ใส่ค่าเริ่มต้น
                 }
             }
+            
             doc.text(returnStatusText, startX + columnWidths.slice(0, 5).reduce((a, b) => a + b, 0), currentY + 5, { width: columnWidths[5], align: 'center' });
         }
         

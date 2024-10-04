@@ -2093,7 +2093,7 @@ async function generateReport() {
         // หน้า 2: ข้อมูลอุปกรณ์ที่พร้อมใช้งาน
         const worksheet2 = workbook.addWorksheet('อุปกรณ์ที่พร้อมใช้งาน');
         worksheet2.columns = [
-            { header: 'ชื่อครุภัณฑ์', key: 'device_name', width: 20 },
+            { header: 'ชื่อครุภัณฑ์', key: 'device_name', width: 50 },
             { header: 'หมายเลขครุภัณฑ์', key: 'item_serial', width: 30 },
             { header: 'ยี่ห้อ', key: 'device_brand', width: 20 },
             { header: 'รุ่น/โมเดล', key: 'device_model', width: 20 },
@@ -2254,7 +2254,7 @@ async function generateReport() {
         function setupCommonColumns(worksheet) {
             worksheet.columns = [
                 { header: 'ลำดับ', key: 'index', width: 10 },
-                { header: 'ชื่อครุภัณฑ์', key: 'device_name', width: 30 },
+                { header: 'ชื่อครุภัณฑ์', key: 'device_name', width: 50 },
                 { header: 'หมายเลขครุภัณฑ์', key: 'item_serial', width: 30 },
                 { header: 'ยี่ห้อ', key: 'device_brand', width: 20 },
                 { header: 'รุ่น/โมเดล', key: 'device_model', width: 20 },
@@ -2279,7 +2279,11 @@ async function generateReport() {
                 device_responsible: record.device_responsible
             });
         });
-
+        worksheetLabDevice.eachRow((row, rowNumber) => {
+            row.eachCell((cell, colNumber) => {
+                cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            });
+        });
         // หน้า: อุปกรณ์ประเภทวัสดุคงทนถาวรประจำห้องปฏิบัติการ
         const worksheetDurable = workbook.addWorksheet('วัสดุคงทนถาวรประจำห้องปฏิบัติการ');
         setupCommonColumns(worksheetDurable);
@@ -2295,7 +2299,11 @@ async function generateReport() {
                 device_responsible: record.device_responsible
             });
         });
-
+        worksheetDurable.eachRow((row, rowNumber) => {
+            row.eachCell((cell, colNumber) => {
+                cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            });
+        });
         // หน้า: อุปกรณ์ประเภทวัสดุสิ้นเปลืองประจำห้องปฏิบัติการ
         const worksheetConsumable = workbook.addWorksheet('วัสดุสิ้นเปลืองประจำห้องปฏิบัติการ');
         setupCommonColumns(worksheetConsumable);
@@ -2311,7 +2319,11 @@ async function generateReport() {
                 device_responsible: record.device_responsible
             });
         });
-
+        worksheetConsumable.eachRow((row, rowNumber) => {
+            row.eachCell((cell, colNumber) => {
+                cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            });
+        });
         // บันทึกไฟล์ Excel
         const today = new Date();
         const dateStr = today.toLocaleDateString('th-TH').split('/').join('-');
@@ -2630,6 +2642,7 @@ app.get('/generate-report', async (req, res) => {
                 ld.loan_date AT TIME ZONE 'Asia/Bangkok' AS loan_date,
                 rd.return_date AT TIME ZONE 'Asia/Bangkok' AS return_date,
                 rd.return_status,
+                ld.loan_status,
                 CONCAT(u.user_firstname, ' ', u.user_lastname) AS user_name,
                 u.user_faculty,
                 u.user_branch,
@@ -2642,7 +2655,7 @@ app.get('/generate-report', async (req, res) => {
             LEFT JOIN
                 return_detail rd ON ld.loan_id = rd.return_id
             JOIN
-                users u ON ld.user_id = u.user_id  -- Join with users table to get user details
+                users u ON ld.user_id = u.user_id
             WHERE
                 ld.user_id = $1
                 AND di.item_type = $2
@@ -2686,7 +2699,7 @@ app.get('/generate-report', async (req, res) => {
         
         // ฟังก์ชันสำหรับวาดหัวตาราง
         function drawTableHeader(doc, startX, startY, columnWidths, rowHeight) {
-            const headers = ['ลำดับที่', 'รายการ', 'หมายเลขครุภัณฑ์', 'วันที่ยืม', 'วันที่คืน', 'หมายเหตุ'];
+            const headers = ['ลำดับที่', 'รายการ', 'หมายเลขครุภัณฑ์', 'วันที่ยืม', 'วันที่คืน', 'สถานะ'];
             doc.rect(startX, startY, doc.page.width - 40, rowHeight).stroke();
             headers.forEach((header, i) => {
                 const columnStartX = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0);
@@ -2715,22 +2728,85 @@ app.get('/generate-report', async (req, res) => {
             doc.text(new Date(loan.loan_date).toLocaleDateString('th-TH'), startX + columnWidths[0] + columnWidths[1] + columnWidths[2], currentY + 5, { width: columnWidths[3], align: 'center' });
             doc.text(loan.return_date ? new Date(loan.return_date).toLocaleDateString('th-TH') : 'ยังไม่คืน', startX + columnWidths[0] + columnWidths[1] + columnWidths[2] + columnWidths[3], currentY + 5, { width: columnWidths[4], align: 'center' });
 
-            let returnStatusText = 'ไม่ระบุ';
-            switch (loan.return_status) {
-                case 'returned': returnStatusText = 'คืนแล้ว'; break;
-                case 'lost': returnStatusText = 'สูญหาย'; break;
-                case 'damaged': returnStatusText = 'ชำรุด'; break;
-                case 'cancel': returnStatusText = 'ถูกยกเลิก'; break;
-                case 'deny': returnStatusText = 'ปฏิเสธ'; break;
+            let returnStatusText = '';
+            if (loan.loan_status) {
+                switch (loan.loan_status) {
+                    case 'pending': 
+                        returnStatusText = 'รอดำเนินการ'; 
+                        break;
+                    case 'approve': 
+                        returnStatusText = 'รอรับอุปกรณ์'; 
+                        break;
+                    case 'borrowed': 
+                        returnStatusText = 'กำลังยืม'; 
+                        break;
+                    case 'overdue': 
+                        returnStatusText = 'คืนเกินกำหนด'; 
+                        break;
+                    default: 
+                        // ถ้าไม่ตรงกับเงื่อนไขใน loan_status ก็ให้เช็ค return_status ต่อไป
+                        if (loan.return_status) {
+                            switch (loan.return_status) {
+                                case 'returned': 
+                                    returnStatusText = 'คืนแล้ว'; 
+                                    break;
+                                case 'lost': 
+                                    returnStatusText = 'สูญหาย'; 
+                                    break;
+                                case 'damaged': 
+                                    returnStatusText = 'ชำรุด'; 
+                                    break;
+                                case 'cancel': 
+                                    returnStatusText = 'ถูกยกเลิก'; 
+                                    break;
+                                case 'deny': 
+                                    returnStatusText = 'ปฏิเสธ'; 
+                                    break;
+                                default: 
+                                    returnStatusText = 'ไม่ระบุ'; 
+                                    break;
+                            }
+                        } else {
+                            returnStatusText = 'ไม่ระบุ'; // ถ้าไม่มีสถานะใน return_status เลยก็ใส่ค่าเริ่มต้น
+                        }
+                        break;
+                }
+            } else {
+                // ถ้าไม่มี loan_status ให้ตรวจสอบ return_status
+                if (loan.return_status) {
+                    switch (loan.return_status) {
+                        case 'returned': 
+                            returnStatusText = 'คืนแล้ว'; 
+                            break;
+                        case 'lost': 
+                            returnStatusText = 'สูญหาย'; 
+                            break;
+                        case 'damaged': 
+                            returnStatusText = 'ชำรุด'; 
+                            break;
+                        case 'cancel': 
+                            returnStatusText = 'ถูกยกเลิก'; 
+                            break;
+                        case 'deny': 
+                            returnStatusText = 'ปฏิเสธ'; 
+                            break;
+                        default: 
+                            returnStatusText = 'ไม่ระบุ'; 
+                            break;
+                    }
+                } else {
+                    returnStatusText = 'ไม่ระบุ'; // ถ้าไม่มีสถานะใน return_status เลยก็ใส่ค่าเริ่มต้น
+                }
             }
             doc.text(returnStatusText, startX + columnWidths.slice(0, 5).reduce((a, b) => a + b, 0), currentY + 5, { width: columnWidths[5], align: 'center' });
         }
+        
 
         // ในส่วนของการสร้าง PDF
         const startX = 20;
         let startY = 200; 
         const rowHeight = 20;
-        const columnWidths = [30, 140, 105, 70, 70, 140];
+        const columnWidths = [30, 175, 175, 60, 60, 58];
 
         drawTableHeader(doc, startX, startY, columnWidths, rowHeight);
         let currentY = startY + rowHeight;

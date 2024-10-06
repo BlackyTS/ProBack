@@ -1915,6 +1915,7 @@ app.get('/admin/summary_report', authenticateToken, async (req, res) => {
 
 // report แบบ execl
 // ทดสอบการเชื่อมต่อฐานข้อมูล
+// ทดสอบการเชื่อมต่อฐานข้อมูล
 async function testDatabase() {
     try {
         const result = await db.query('SELECT NOW()');
@@ -1934,12 +1935,16 @@ async function getLoanReturnData() {
         const result = await db.query(`
             SELECT
                 ROW_NUMBER() OVER (ORDER BY ld.transaction_id) AS transaction_id,
+                d.device_name AS device_name,            
+                di.item_serial AS device_serial,         
+                d.device_location AS device_location,           
                 ld.user_id,
                 CONCAT(u.user_firstname, ' ', u.user_lastname) AS user_fullname,
-                ld.loan_date,
-                ld.return_date,
-                COUNT(di.item_id) AS item_quantity,
-                STRING_AGG(di.item_serial, ', ') AS device_serial,
+                TO_CHAR(ld.loan_date, 'YYYY-MM-DD') AS loan_date,  -- แสดงวันที่ยืมในรูปแบบ YYYY-MM-DD
+                CASE 
+                    WHEN ld.return_date IS NULL THEN 'ยังไม่คืน'  -- หากไม่มีวันที่คืนให้แสดงว่า "ยังไม่คืน"
+                    ELSE TO_CHAR(ld.return_date, 'YYYY-MM-DD')      -- แสดงวันที่คืนในรูปแบบ YYYY-MM-DD
+                END AS return_date,                      
                 CASE
                     WHEN ld.loan_status = 'complete' THEN 'คืนแล้ว'
                     WHEN ld.loan_status = 'deny' THEN 'ถูกปฏิเสธ'
@@ -1952,9 +1957,9 @@ async function getLoanReturnData() {
                 END AS transaction_status
             FROM loan_detail ld
             JOIN device_item di ON ld.item_id = di.item_id
+            JOIN device d ON di.device_id = d.device_id  
             JOIN users u ON ld.user_id = u.user_id
-            GROUP BY ld.transaction_id, ld.user_id, u.user_firstname, u.user_lastname, ld.loan_date, ld.return_date, ld.loan_status
-            ORDER BY transaction_id
+            ORDER BY transaction_id;
         `);
         if (result && result.length > 0) {
             console.log('Loan Return Query Result:', result);
@@ -1969,33 +1974,28 @@ async function getLoanReturnData() {
     }
 }
 
-// ฟังก์ชันดึงข้อมูลอุปกรณ์ทั้งหมด
-async function getDeviceData() {
-    try {
-        const result = await db.query(`
-            SELECT
-                item_serial,
-                CASE 
-                    WHEN item_availability = 'ready' THEN 'พร้อมใช้งาน'
-                    WHEN item_availability = 'pending' THEN 'รอดำเนินการ'
-                    WHEN item_availability = 'borrowed' THEN 'กำลังถูกยืม'
-                    WHEN item_availability = 'broken' THEN 'ชำรุด'
-                    WHEN item_availability = 'lost' THEN 'สูญหาย'
-                    ELSE 'ไม่ทราบสถานะ'
-                END AS item_availability
-            FROM device_item
-        `);
-        if (result && result.length > 0) {
-            console.log('Device Data Query Result:', result);
-            return result;
-        } else {
-            console.log('No device data found.');
-            return [];
-        }
-    } catch (error) {
-        console.error('Error fetching device data:', error);
-        throw error;
-    }
+// ฟังก์ชันดึงข้อมูลอุปกรณ์ตามสถานะ
+async function getDeviceByStatus(status) {
+    const result = await db.query(`
+        SELECT di.item_serial, di.item_availability, d.device_name, d.device_brand, d.device_model, d.device_location, d.device_responsible
+        FROM device_item di
+        JOIN device d ON di.device_id = d.device_id
+        WHERE di.item_availability = $1 
+        ORDER BY di.item_serial
+    `, [status]);
+    return result;
+}
+
+// ฟังก์ชันดึงข้อมูลอุปกรณ์ตามประเภท
+async function getDeviceByType(type) {
+    const result = await db.query(`
+        SELECT di.item_serial, d.device_name, d.device_brand, d.device_model, d.device_location, d.device_responsible
+        FROM device_item di
+        JOIN device d ON di.device_id = d.device_id
+        WHERE d.device_type = $1 
+        ORDER BY di.item_serial
+    `, [type]);
+    return result;
 }
 
 // ฟังก์ชันดึงข้อมูลสรุปยอดรวม
@@ -2021,239 +2021,201 @@ async function getDeviceSummary() {
         throw error;
     }
 }
-// สร้างรูปแบบ excel
-async function generateReport() {
+
+// ฟังก์ชันสร้างรายงานประวัติการยืม-คืนอุปกรณ์ทั้งหมด
+async function generateLoanReturnReport() {
     try {
         const workbook = new ExcelJS.Workbook();
-
-        // หน้า 1: ข้อมูลรายการยืม-คืนทั้งหมด
-        const worksheet1 = workbook.addWorksheet('รายการยืม-คืนทั้งหมด');
-        worksheet1.columns = [
-            { header: 'รหัสรายการ', key: 'transaction_id', width: 15 },
-            { header: 'รหัสผู้ใช้', key: 'user_id', width: 10 },
-            { header: 'ชื่อ-สกุลผู้ยืม', key: 'user_fullname', width: 20 },
-            { header: 'วันที่ยืม', key: 'loan_date', width: 15 },
-            { header: 'วันที่คืน', key: 'return_date', width: 15 },
-            { header: 'จำนวนอุปกรณ์ที่ยืม', key: 'item_quantity', width: 25 },
-            { header: 'สถานะรายการ', key: 'transaction_status', width: 15 },
-            { header: 'อุปกรณ์ที่ยืม', key: 'device_serial', width: 200 }          
+        const worksheet = workbook.addWorksheet('รายการยืม-คืนทั้งหมด');
+        worksheet.columns = [
+            { header: 'ลำดับ', key: 'index', width: 20 },
+            { header: 'ชื่อครุภัณฑ์', key: 'device_name', width: 50 },
+            { header: 'รหัสครุภัณฑ์', key: 'device_serial', width: 50 },
+            { header: 'สถานที่ใช้งาน', key: 'location', width: 30 },
+            { header: 'รหัสนิสิต/อาจารย์', key: 'user_id', width: 20 },
+            { header: 'ชื่อ-สกุลผู้ยืม', key: 'user_fullname', width: 25 },
+            { header: 'วันที่ยืม', key: 'loan_date', width: 20 },
+            { header: 'วันที่คืน', key: 'return_date', width: 20 },
+            { header: 'สถานะรายการ', key: 'transaction_status', width: 15 }
         ];
 
-        worksheet1.getRow(1).font = { bold: true };
-        worksheet1.getRow(1).fill = {
+        worksheet.getRow(1).font = { bold: true };
+        worksheet.getRow(1).fill = {
             type: 'pattern',
             pattern: 'solid',
             fgColor: { argb: 'FFD3D3D3' }
         };
 
-        const loanReturnData = await getLoanReturnData();
-        console.log('Loan Return Data:', loanReturnData);
+        const loanReturnData = await getLoanReturnData(); // ดึงข้อมูลจากฐานข้อมูล
 
-        let totalItemQuantity = 0;
-        let transactionCount = 0;
+        let totalTransactions = 0;
+        let notReturnedCount = 0;
+        let returnedCount = 0;
+
+        // ฟังก์ชันตรวจสอบว่าเป็นวันที่ที่ถูกต้องหรือไม่
+        function isValidDate(date) {
+            return !isNaN(Date.parse(date));
+        }
+
         if (loanReturnData.length > 0) {
+            let index = 1;
             loanReturnData.forEach(record => {
-                worksheet1.addRow({
-                    transaction_id: record.transaction_id,
+                // ตรวจสอบว่าค่าวันที่ยืมและคืนเป็นวันที่ที่ถูกต้องหรือไม่
+                const loanDate = isValidDate(record.loan_date) ? new Date(record.loan_date).toLocaleDateString('th-TH') : 'N/A';
+                const returnDate = isValidDate(record.return_date) ? new Date(record.return_date).toLocaleDateString('th-TH') : 'ยังไม่ได้คืน';
+
+                // เพิ่มแถวสำหรับอุปกรณ์แต่ละตัวพร้อมข้อมูลการยืม
+                worksheet.addRow({
+                    index: index++,
+                    device_name: record.device_name,
+                    device_serial: record.device_serial,
+                    location: record.device_location,
                     user_id: record.user_id,
                     user_fullname: record.user_fullname,
-                    loan_date: record.loan_date ? new Date(record.loan_date).toLocaleDateString('th-TH') : 'N/A',
-                    return_date: record.return_date ? new Date(record.return_date).toLocaleDateString('th-TH') : 'N/A',
-                    item_quantity: record.item_quantity,
-                    device_serial: record.device_serial,
+                    loan_date: loanDate,
+                    return_date: returnDate,
                     transaction_status: record.transaction_status
                 });
-                totalItemQuantity += parseInt(record.item_quantity) || 0;
-                transactionCount += 1;
+
+                totalTransactions++;
+
+                // แก้ไขการคำนวณจำนวนรายการที่ยังไม่ได้คืนและคืนแล้ว
+                if (record.transaction_status === 'กำลังถูกยืม' || returnDate === 'ยังไม่ได้คืน') {
+                    notReturnedCount++;
+                } else {
+                    returnedCount++;
+                }
             });
-            worksheet1.addRow({
-                transaction_id: 'จำนวนอุปกรณ์ที่ยืมทั้งหมด',
-                item_quantity: totalItemQuantity
+
+            // เว้น 1 บรรทัดแล้วเพิ่มผลรวมด้านล่าง
+            worksheet.addRow([]);
+            worksheet.addRow({
+                device_name: 'จำนวนรายการยืม-คืนอุปกรณ์ทั้งหมด',
+                device_serial: totalTransactions
             }).font = { bold: true };
-            worksheet1.addRow({
-                transaction_id: 'จำนวนรายการทั้งหมด',
-                item_quantity: transactionCount
+            worksheet.addRow({
+                device_name: 'จำนวนรายการที่ยังไม่ได้คืน',
+                device_serial: notReturnedCount
             }).font = { bold: true };
+            worksheet.addRow({
+                device_name: 'จำนวนรายการที่คืนแล้ว',
+                device_serial: returnedCount
+            }).font = { bold: true };
+
         } else {
-            worksheet1.addRow(['No loan/return data available']);
-        } 
-        
-        // ฟังก์ชันดึงข้อมูลอุปกรณ์ตามสถานะ
-        async function getDeviceByStatus(status) {
-            const result = await db.query(`
-                SELECT di.item_serial, di.item_availability, d.device_name, d.device_brand, d.device_model, d.device_location, d.device_responsible
-                FROM device_item di
-                JOIN device d ON di.device_id = d.device_id
-                WHERE di.item_availability = $1 
-                ORDER BY di.item_serial
-            `, [status]);
-            return result;
+            worksheet.addRow(['ไม่มีข้อมูลการยืม-คืน']);
         }
 
-        // หน้า 2: ข้อมูลอุปกรณ์ที่พร้อมใช้งาน
-        const worksheet2 = workbook.addWorksheet('อุปกรณ์ที่พร้อมใช้งาน');
-        worksheet2.columns = [
-            { header: 'ชื่อครุภัณฑ์', key: 'device_name', width: 50 },
-            { header: 'หมายเลขครุภัณฑ์', key: 'item_serial', width: 30 },
-            { header: 'ยี่ห้อ', key: 'device_brand', width: 20 },
-            { header: 'รุ่น/โมเดล', key: 'device_model', width: 20 },
-            { header: 'สถานที่ใช้งาน', key: 'device_location', width: 20 },
-            { header: 'ชื่อผู้รับผิดชอบ', key: 'device_responsible', width: 20 },
-            { header: 'สถานะ', key: 'item_availability', width: 20 }
-        ];
-        worksheet2.getRow(1).font = { bold: true };
-        const readyDevices = await getDeviceByStatus('ready');
-        readyDevices.forEach(record => {
-            worksheet2.addRow({
-                item_serial: record.item_serial,
-                device_name: record.device_name,
-                device_brand: record.device_brand,
-                device_model: record.device_model,
-                device_location: record.device_location,
-                device_responsible: record.device_responsible,
-                item_availability: 'พร้อมใช้งาน'
-            });
-        });
-        worksheet2.addRow({
-            item_serial: `จำนวนอุปกรณ์ที่พร้อมใช้งานทั้งหมด`,
-            item_availability: readyDevices.length
-        }).font = { bold: true };
-
-        // จัดตำแหน่งข้อมูลให้อยู่ตรงกลางใน worksheet2
-        worksheet2.eachRow((row, rowNumber) => {
+        // จัดตำแหน่งข้อมูลให้อยู่ตรงกลาง
+        worksheet.eachRow((row, rowNumber) => {
             row.eachCell((cell, colNumber) => {
                 cell.alignment = { vertical: 'middle', horizontal: 'center' };
             });
         });
 
-        // หน้า 3: ข้อมูลอุปกรณ์ที่รอดำเนินการ
-        const worksheet3 = workbook.addWorksheet('อุปกรณ์ที่รอดำเนินการ');
-        worksheet3.columns = worksheet2.columns;
-        worksheet3.getRow(1).font = { bold: true };
-        const pendingDevices = await getDeviceByStatus('pending');
-        pendingDevices.forEach(record => {
-            worksheet3.addRow({
-                item_serial: record.item_serial,
-                device_name: record.device_name,
-                device_brand: record.device_brand,
-                device_model: record.device_model,
-                device_location: record.device_location,
-                device_responsible: record.device_responsible,
-                item_availability: 'รอดำเนินการ'
-            });
-        });
-        worksheet3.addRow({
-            item_serial: `จำนวนอุปกรณ์ที่รอดำเนินการทั้งหมด`,
-            item_availability: pendingDevices.length
-        }).font = { bold: true };
+        // บันทึกไฟล์ Excel
+        const fileName = 'รายงานประวัติการยืม-คืนอุปกรณ์ทั้งหมด.xlsx';
+        const filePath = path.join(__dirname, 'report', fileName);
 
-        // จัดตำแหน่งข้อมูลให้อยู่ตรงกลางใน worksheet3
-        worksheet3.eachRow((row, rowNumber) => {
-            row.eachCell((cell, colNumber) => {
-                cell.alignment = { vertical: 'middle', horizontal: 'center' };
-            });
-        });
+        console.log('Saving Loan Return report to:', filePath);
 
-        // หน้า 4: ข้อมูลอุปกรณ์ที่กำลังถูกยืม
-        const worksheet4 = workbook.addWorksheet('อุปกรณ์ที่กำลังถูกยืม');
-        worksheet4.columns = worksheet2.columns;
-        worksheet4.getRow(1).font = { bold: true };
-        const borrowedDevices = await getDeviceByStatus('borrowed');
-        borrowedDevices.forEach(record => {
-            worksheet4.addRow({
-                item_serial: record.item_serial,
-                device_name: record.device_name,
-                device_brand: record.device_brand,
-                device_model: record.device_model,
-                device_location: record.device_location,
-                device_responsible: record.device_responsible,
-                item_availability: 'กำลังถูกยืม'
-            });
-        });
-        worksheet4.addRow({
-            item_serial: `จำนวนอุปกรณ์ที่กำลังถูกยืมทั้งหมด`,
-            item_availability: borrowedDevices.length
-        }).font = { bold: true };
+        await workbook.xlsx.writeFile(filePath);
+        console.log('Loan Return report saved successfully.');
 
-        // จัดตำแหน่งข้อมูลให้อยู่ตรงกลางใน worksheet4
-        worksheet4.eachRow((row, rowNumber) => {
-            row.eachCell((cell, colNumber) => {
-                cell.alignment = { vertical: 'middle', horizontal: 'center' };
-            });
-        });
+        return filePath;
 
-        // หน้า 5: ข้อมูลอุปกรณ์ที่ชำรุด
-        const worksheet5 = workbook.addWorksheet('อุปกรณ์ที่ชำรุด');
-        worksheet5.columns = worksheet2.columns;
-        worksheet5.getRow(1).font = { bold: true };
-        const brokenDevices = await getDeviceByStatus('broken');
-        brokenDevices.forEach(record => {
-            worksheet5.addRow({
-                item_serial: record.item_serial,
-                device_name: record.device_name,
-                device_brand: record.device_brand,
-                device_model: record.device_model,
-                device_location: record.device_location,
-                device_responsible: record.device_responsible,
-                item_availability: 'ชำรุด'
-            });
-        });
-        worksheet5.addRow({
-            item_serial: `จำนวนอุปกรณ์ที่ชำรุดทั้งหมด`,
-            item_availability: brokenDevices.length
-        }).font = { bold: true };
+    } catch (error) {
+        console.error('Error generating Loan Return report:', error);
+        throw error;
+    }
+}
 
-        // จัดตำแหน่งข้อมูลให้อยู่ตรงกลางใน worksheet5
-        worksheet5.eachRow((row, rowNumber) => {
-            row.eachCell((cell, colNumber) => {
-                cell.alignment = { vertical: 'middle', horizontal: 'center' };
-            });
-        });
+// ฟังก์ชันสร้างรายงานสถานะอุปกรณ์ทั้งหมด
+async function generateDeviceStatusReport() {
+    try {
+        const workbook = new ExcelJS.Workbook();
 
-        // หน้า 6: ข้อมูลอุปกรณ์ที่สูญหาย
-        const worksheet6 = workbook.addWorksheet('อุปกรณ์ที่สูญหาย');
-        worksheet6.columns = worksheet2.columns;
-        worksheet6.getRow(1).font = { bold: true };
-        const lostDevices = await getDeviceByStatus('lost');
-        lostDevices.forEach(record => {
-            worksheet6.addRow({
-                item_serial: record.item_serial,
-                device_name: record.device_name,
-                device_brand: record.device_brand,
-                device_model: record.device_model,
-                device_location: record.device_location,
-                device_responsible: record.device_responsible,
-                item_availability: 'สูญหาย'
-            });
-        });
-        worksheet6.addRow({
-            item_serial: `จำนวนอุปกรณ์ที่สูญหายทั้งหมด`,
-            item_availability: lostDevices.length
-        }).font = { bold: true };
+        const statuses = ['ready', 'pending', 'borrowed', 'broken', 'lost'];
+        const statusNames = {
+            'ready': 'พร้อมใช้งาน',
+            'pending': 'รอดำเนินการ',
+            'borrowed': 'กำลังถูกยืม',
+            'broken': 'ชำรุด',
+            'lost': 'สูญหาย'
+        };
 
-        // จัดตำแหน่งข้อมูลให้อยู่ตรงกลางใน worksheet6
-        worksheet6.eachRow((row, rowNumber) => {
-            row.eachCell((cell, colNumber) => {
-                cell.alignment = { vertical: 'middle', horizontal: 'center' };
-            });
-        });
-        
-        // ฟังก์ชันดึงข้อมูลอุปกรณ์ตามประเภท
-        async function getDeviceByType(type) {
-            const result = await db.query(`
-                SELECT di.item_serial, d.device_name, d.device_brand, d.device_model, d.device_location, d.device_responsible
-                FROM device_item di
-                JOIN device d ON di.device_id = d.device_id
-                WHERE d.device_type = $1 
-                ORDER BY di.item_serial
-            `, [type]);
-            return result;
+        for (const status of statuses) {
+            const worksheet = workbook.addWorksheet(`สถานะ ${statusNames[status]}`);
+            worksheet.columns = [
+                { header: 'ชื่อครุภัณฑ์', key: 'device_name', width: 50 },
+                { header: 'หมายเลขครุภัณฑ์', key: 'item_serial', width: 30 },
+                { header: 'ยี่ห้อ', key: 'device_brand', width: 20 },
+                { header: 'รุ่น/โมเดล', key: 'device_model', width: 20 },
+                { header: 'สถานที่ใช้งาน', key: 'device_location', width: 20 },
+                { header: 'ชื่อผู้รับผิดชอบ', key: 'device_responsible', width: 20 },
+                { header: 'สถานะ', key: 'item_availability', width: 20 }
+            ];
+            worksheet.getRow(1).font = { bold: true };
+
+            // ดึงข้อมูลอุปกรณ์ตามสถานะ
+            try {
+                const devices = await getDeviceByStatus(status);
+                devices.forEach(record => {
+                    worksheet.addRow({
+                        device_name: record.device_name,
+                        item_serial: record.item_serial,
+                        device_brand: record.device_brand,
+                        device_model: record.device_model,
+                        device_location: record.device_location,
+                        device_responsible: record.device_responsible,
+                        item_availability: statusNames[status]
+                    });
+                });
+
+                // เพิ่มแถวสรุปจำนวนอุปกรณ์
+                worksheet.addRow({
+                    item_serial: `จำนวนอุปกรณ์ที่ ${statusNames[status]} ทั้งหมด`,
+                    item_availability: devices.length
+                }).font = { bold: true };
+
+                // จัดตำแหน่งข้อมูลให้อยู่ตรงกลาง
+                worksheet.eachRow((row, rowNumber) => {
+                    row.eachCell((cell, colNumber) => {
+                        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+                    });
+                });
+
+            } catch (error) {
+                console.error(`Error fetching devices with status ${status}:`, error);
+            }
         }
+
+        // บันทึกไฟล์ Excel
+        const fileName = 'รายงานสถานะอุปกรณ์ทั้งหมด.xlsx';
+        const filePath = path.join(__dirname, 'report', fileName);
+
+        console.log('Saving Device Status report to:', filePath);
+
+        await workbook.xlsx.writeFile(filePath);
+        console.log('Device Status report saved successfully.');
+
+        return filePath;
+
+    } catch (error) {
+        console.error('Error generating Device Status report:', error);
+        throw error;
+    }
+}
+
+// ฟังก์ชันสร้างรายงานข้อมูลอุปกรณ์ทั้งหมดในห้องปฏิบัติการ
+async function generateDeviceTypeReport() {
+    try {
+        const workbook = new ExcelJS.Workbook();
 
         // ฟังก์ชันสำหรับการเพิ่มคอลัมน์ทั่วไป
         function setupCommonColumns(worksheet) {
             worksheet.columns = [
-                { header: 'ลำดับ', key: 'index', width: 10 },
+                { header: 'ลำดับที่', key: 'index', width: 10 },
                 { header: 'ชื่อครุภัณฑ์', key: 'device_name', width: 50 },
                 { header: 'หมายเลขครุภัณฑ์', key: 'item_serial', width: 30 },
                 { header: 'ยี่ห้อ', key: 'device_brand', width: 20 },
@@ -2264,103 +2226,104 @@ async function generateReport() {
             worksheet.getRow(1).font = { bold: true };
         }
 
-        // หน้า: อุปกรณ์ประเภทครุภัณฑ์ประจำห้องปฏิบัติการ
-        const worksheetLabDevice = workbook.addWorksheet('ครุภัณฑ์ประจำห้องปฏิบัติการ');
-        setupCommonColumns(worksheetLabDevice);
-        const labDevices = await getDeviceByType('ครุภัณฑ์ประจำห้องปฏิบัติการ');
-        labDevices.forEach((record, index) => {
-            worksheetLabDevice.addRow({
-                index: index + 1,
-                device_name: record.device_name,
-                item_serial: record.item_serial,
-                device_brand: record.device_brand,
-                device_model: record.device_model,
-                device_location: record.device_location,
-                device_responsible: record.device_responsible
+        // ประเภทอุปกรณ์ที่ต้องการรายงาน
+        const deviceTypes = [
+            'ครุภัณฑ์ประจำห้องปฏิบัติการ',
+            'วัสดุคงทนถาวรประจำห้องปฏิบัติการ',
+            'วัสดุสิ้นเปลืองประจำห้องปฏิบัติการ'
+        ];
+
+        for (const type of deviceTypes) {
+            const worksheet = workbook.addWorksheet(type);
+            setupCommonColumns(worksheet);
+            const devices = await getDeviceByType(type);
+            devices.forEach((record, index) => {
+                worksheet.addRow({
+                    index: index + 1,
+                    device_name: record.device_name,
+                    item_serial: record.item_serial,
+                    device_brand: record.device_brand,
+                    device_model: record.device_model,
+                    device_location: record.device_location,
+                    device_responsible: record.device_responsible
+                });
             });
-        });
-        worksheetLabDevice.eachRow((row, rowNumber) => {
-            row.eachCell((cell, colNumber) => {
-                cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            // จัดตำแหน่งข้อมูลให้อยู่ตรงกลาง
+            worksheet.eachRow((row, rowNumber) => {
+                row.eachCell((cell, colNumber) => {
+                    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+                });
             });
-        });
-        // หน้า: อุปกรณ์ประเภทวัสดุคงทนถาวรประจำห้องปฏิบัติการ
-        const worksheetDurable = workbook.addWorksheet('วัสดุคงทนถาวรประจำห้องปฏิบัติการ');
-        setupCommonColumns(worksheetDurable);
-        const durableDevices = await getDeviceByType('วัสดุคงทนถาวรประจำห้องปฏิบัติการ');
-        durableDevices.forEach((record, index) => {
-            worksheetDurable.addRow({
-                index: index + 1,
-                device_name: record.device_name,
-                item_serial: record.item_serial,
-                device_brand: record.device_brand,
-                device_model: record.device_model,
-                device_location: record.device_location,
-                device_responsible: record.device_responsible
-            });
-        });
-        worksheetDurable.eachRow((row, rowNumber) => {
-            row.eachCell((cell, colNumber) => {
-                cell.alignment = { vertical: 'middle', horizontal: 'center' };
-            });
-        });
-        // หน้า: อุปกรณ์ประเภทวัสดุสิ้นเปลืองประจำห้องปฏิบัติการ
-        const worksheetConsumable = workbook.addWorksheet('วัสดุสิ้นเปลืองประจำห้องปฏิบัติการ');
-        setupCommonColumns(worksheetConsumable);
-        const consumableDevices = await getDeviceByType('วัสดุสิ้นเปลืองประจำห้องปฏิบัติการ');
-        consumableDevices.forEach((record, index) => {
-            worksheetConsumable.addRow({
-                index: index + 1,
-                device_name: record.device_name,
-                item_serial: record.item_serial,
-                device_brand: record.device_brand,
-                device_model: record.device_model,
-                device_location: record.device_location,
-                device_responsible: record.device_responsible
-            });
-        });
-        worksheetConsumable.eachRow((row, rowNumber) => {
-            row.eachCell((cell, colNumber) => {
-                cell.alignment = { vertical: 'middle', horizontal: 'center' };
-            });
-        });
+        }
+
         // บันทึกไฟล์ Excel
-        const today = new Date();
-        const dateStr = today.toLocaleDateString('th-TH').split('/').join('-');
-        const fileName = `summary_report_${dateStr}.xlsx`;
+        const fileName = 'รายงานข้อมูลอุปกรณ์ทั้งหมดในห้องปฏิบัติการ.xlsx';
         const filePath = path.join(__dirname, 'report', fileName);
 
-        console.log('Saving file to:', filePath);
+        console.log('Saving Device Type report to:', filePath);
 
         await workbook.xlsx.writeFile(filePath);
-        console.log('File saved successfully');
+        console.log('Device Type report saved successfully.');
 
         return filePath;
 
     } catch (error) {
-        console.error('Error generating report:', error);
+        console.error('Error generating Device Type report:', error);
         throw error;
     }
 }
 
-// Route สำหรับดาวน์โหลดรายงาน
-app.get('/report/download', async (req, res) => {
+// Route สำหรับดาวน์โหลดรายงานประวัติการยืม-คืนอุปกรณ์ทั้งหมด
+app.get('/report/download/loan-return', async (req, res) => {
     try {
         await testDatabase(); // ทดสอบการเชื่อมต่อฐานข้อมูล
-
-        const filePath = await generateReport();
-        res.download(filePath, err => {
+        const filePath = await generateLoanReturnReport();
+        res.download(filePath, 'รายงานประวัติการยืม-คืนอุปกรณ์ทั้งหมด.xlsx', err => {
             if (err) {
-                console.error('Error downloading file:', err);
-                res.status(500).send('Failed to download file.');
+                console.error('Error downloading Loan Return report:', err);
+                res.status(500).send('Failed to download Loan Return report.');
             }
         });
     } catch (error) {
-        console.error('Failed to generate report:', error);
-        res.status(500).send('Failed to generate report.');
+        console.error('Failed to generate Loan Return report:', error);
+        res.status(500).send('Failed to generate Loan Return report.');
     }
 });
 
+// Route สำหรับดาวน์โหลดรายงานสถานะอุปกรณ์ทั้งหมด
+app.get('/report/download/status', async (req, res) => {
+    try {
+        await testDatabase(); // ทดสอบการเชื่อมต่อฐานข้อมูล
+        const filePath = await generateDeviceStatusReport();
+        res.download(filePath, 'รายงานสถานะอุปกรณ์ทั้งหมด.xlsx', err => {
+            if (err) {
+                console.error('Error downloading Device Status report:', err);
+                res.status(500).send('Failed to download Device Status report.');
+            }
+        });
+    } catch (error) {
+        console.error('Failed to generate Device Status report:', error);
+        res.status(500).send('Failed to generate Device Status report.');
+    }
+});
+
+// Route สำหรับดาวน์โหลดรายงานข้อมูลอุปกรณ์ทั้งหมดในห้องปฏิบัติการ
+app.get('/report/download/device-type', async (req, res) => {
+    try {
+        await testDatabase(); // ทดสอบการเชื่อมต่อฐานข้อมูล
+        const filePath = await generateDeviceTypeReport();
+        res.download(filePath, 'รายงานข้อมูลอุปกรณ์ทั้งหมดในห้องปฏิบัติการ.xlsx', err => {
+            if (err) {
+                console.error('Error downloading Device Type report:', err);
+                res.status(500).send('Failed to download Device Type report.');
+            }
+        });
+    } catch (error) {
+        console.error('Failed to generate Device Type report:', error);
+        res.status(500).send('Failed to generate Device Type report.');
+    }
+});
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // approve แค่ละ user
 app.get('/loan_detail/approve/:user_id', authenticateToken, async (req, res) => {
     const { user_id } = req.params; // ดึง user_id จากพารามิเตอร์ URL
@@ -2600,22 +2563,27 @@ app.post('/fetch-report', async (req, res) => {
 
     try {
         const data = await db.any(`
-            SELECT
-                di.item_name,
-                di.item_serial,
-                ld.loan_date AT TIME ZONE 'Asia/Bangkok' AS loan_date,
-                rd.return_date AT TIME ZONE 'Asia/Bangkok' AS return_date,
-                rd.return_status
-            FROM
-                loan_detail ld
-            JOIN
-                device_item di ON ld.item_id = di.item_id
-            LEFT JOIN
-                return_detail rd ON ld.loan_id = rd.return_id
-            WHERE
-                ld.user_id = $1
-                AND di.item_type = $2
-                AND ld.loan_date AT TIME ZONE 'Asia/Bangkok' BETWEEN $3::DATE AND $3::DATE + INTERVAL '1 DAY'
+        SELECT
+            di.item_name,
+            di.item_serial,
+            ld.loan_date AT TIME ZONE 'Asia/Bangkok' AS loan_date,
+            rd.return_date AT TIME ZONE 'Asia/Bangkok' AS return_date,
+            rd.return_status,
+            CASE
+                WHEN rd.return_date IS NULL AND ld.loan_date < CURRENT_DATE THEN 'overdue'
+                WHEN rd.return_date IS NULL THEN 'borrowed'
+                ELSE 'returned'
+            END AS loan_status
+        FROM
+            loan_detail ld
+        JOIN
+            device_item di ON ld.item_id = di.item_id
+        LEFT JOIN
+            return_detail rd ON ld.loan_id = rd.return_id
+        WHERE
+            ld.user_id = $1
+            AND di.item_type = $2
+            AND ld.loan_date AT TIME ZONE 'Asia/Bangkok' BETWEEN $3::DATE AND $3::DATE + INTERVAL '1 DAY'
         `, [user_id, device_type, loan_date]);
 
         if (data.length === 0) {

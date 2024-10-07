@@ -1200,7 +1200,7 @@ app.post('/loan', async (req, res) => {
             );
 
             // ส่ง JSON กลับไป
-            res.status(200).json({message: 'Loan request successful.'});
+            res.status(200).json('ส่งคำร้องการยืมสำเร็จ');
             // ส่งการแจ้งเตือนผ่าน Line Notify พร้อมชื่อผู้ยืม
             const notifyMessage = `มีการขอยืมอุปกรณ์ใหม่แล้ว. ชื่อผู้ยืม: ${user_firstname} ${user_lastname}(User ID: ${user_id}), จำนวนรวม: ${totalItemQuantity}, จะมารับอุปกรณ์ภายในวันที่ ${new Date(due_date).toLocaleDateString()}` ;
             await sendLineNotify(notifyMessage);
@@ -1208,7 +1208,7 @@ app.post('/loan', async (req, res) => {
     } catch (error) {
         console.error('Error processing loan request:', error.message);
         if (!res.headersSent) {
-            res.status(500).json({ message: 'Error processing loan request' });
+            res.status(500).json('ส่งคำร้องการยืมไม่สำเร็จ');
         }
     }
 });
@@ -1951,6 +1951,7 @@ async function getLoanReturnData() {
             d.device_location AS location,
             ld.user_id AS user_id,
             CONCAT(u.user_firstname, ' ', u.user_lastname) AS user_name,
+            u.user_phone AS user_phone,
             TO_CHAR(ld.loan_date, 'DD/MM/YYYY') AS loan_date,
             CASE 
                 WHEN ld.return_date IS NULL THEN 'ยังไม่ได้คืน'
@@ -2046,6 +2047,7 @@ async function generateLoanReturnReport() {
             { header: 'สถานที่ใช้งาน', key: 'location', width: 30 },
             { header: 'รหัสนิสิต/อาจารย์', key: 'user_id', width: 20 },
             { header: 'ชื่อ-สกุลผู้ยืม', key: 'user_name', width: 25 },
+            { header: 'เบอร์โทรศัพท์', key: 'user_phone', width: 20 },
             { header: 'วันที่ยืม', key: 'loan_date', width: 20 },
             { header: 'วันที่คืน', key: 'return_date', width: 20 },
             { header: 'สถานะรายการ', key: 'transaction_status', width: 15 }
@@ -2077,6 +2079,7 @@ async function generateLoanReturnReport() {
                     location: record.location,
                     user_id: record.user_id,
                     user_name: record.user_name,
+                    user_phone: record.user_phone,
                     loan_date: record.loan_date,
                     return_date: record.return_date,
                     transaction_status: record.สถานะรายการ

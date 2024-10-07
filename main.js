@@ -1063,7 +1063,7 @@ app.get('/loan-data', async (req, res) => {
         }
 
         // แปลงข้อมูลจาก QR code เป็นรายการอุปกรณ์
-        const devices = parseQRCodeData(qrCodeData);
+        const devices = parseQRCodeData(qrCodeData); // สมมติว่ามีฟังก์ชันนี้อยู่
 
         // ตรวจสอบว่ามีข้อมูลใน devices หรือไม่
         if (devices.length == 0) {
@@ -1104,23 +1104,24 @@ app.post('/loan', async (req, res) => {
     const { devices, due_date, id } = req.body;
     let itemAvailabilityStatus = 'ready';
     const loan_status = 'pending';
-    if (loan_status == 'pending') {
+
+    if (loan_status === 'pending') {
         itemAvailabilityStatus = 'pending';
     }
+
     try {
         if (!Array.isArray(devices) || devices.length == 0) {
             return res.status(400).json({ message: 'Invalid selection. Please provide at least one device.' });
         }
 
         if (!due_date || isNaN(new Date(due_date).getTime())) {
-            return res.status(400).json({ message: 'Invalid get date.' });
+            return res.status(400).json({ message: 'Invalid due date.' });
         }
 
         const user_id = id;
         const loan_date = new Date();
         const cancelable_until = new Date(loan_date.getTime() + 12 * 60 * 60 * 1000); // 12 ชั่วโมงถัดไป
-        console.log(devices)
-        console.log(due_date)
+
         await db.tx(async t => {
             let totalItemQuantity = 0;
 
@@ -1173,7 +1174,7 @@ app.post('/loan', async (req, res) => {
                     );
                     nextLoanId++;
 
-                    if (loan_status == 'pending') {
+                    if (loan_status === 'pending') {
                         await t.none(
                             'UPDATE device_item SET item_availability = $1 WHERE item_id = $2',
                             [itemAvailabilityStatus, item_id]
@@ -1197,11 +1198,11 @@ app.post('/loan', async (req, res) => {
                 'UPDATE transaction SET item_quantity = $1 WHERE transaction_id = $2',
                 [totalItemQuantity, nextTransactionId]
             );
-            res.status(200).json({ message: 'Loan request processed successfully' });
-            console.log(nextTransactionId)
-            console.log(serialNumber)
+
+            // ส่ง JSON กลับไป
+            res.status(200).json({message: 'Loan request successful.'});
             // ส่งการแจ้งเตือนผ่าน Line Notify พร้อมชื่อผู้ยืม
-            const notifyMessage = `มีการขอยืมอุปกรณ์ใหม่แล้ว. ชื่อผู้ยืม: ${user_firstname} ${user_lastname}(User ID: ${user_id}), จำนวนรวม: ${totalItemQuantity}, จะมารับอุปกรณ์ภายในวันที่ ${new Date(due_date).toLocaleDateString()} `;
+            const notifyMessage = `มีการขอยืมอุปกรณ์ใหม่แล้ว. ชื่อผู้ยืม: ${user_firstname} ${user_lastname}(User ID: ${user_id}), จำนวนรวม: ${totalItemQuantity}, จะมารับอุปกรณ์ภายในวันที่ ${new Date(due_date).toLocaleDateString()}` ;
             await sendLineNotify(notifyMessage);
         });
     } catch (error) {
@@ -1933,33 +1934,44 @@ async function testDatabase() {
 async function getLoanReturnData() {
     try {
         const result = await db.query(`
+        WITH grouped_devices AS (
             SELECT
-                ROW_NUMBER() OVER (ORDER BY ld.transaction_id) AS transaction_id,
-                d.device_name AS device_name,            
-                di.item_serial AS device_serial,         
-                d.device_location AS device_location,           
-                ld.user_id,
-                CONCAT(u.user_firstname, ' ', u.user_lastname) AS user_fullname,
-                TO_CHAR(ld.loan_date, 'YYYY-MM-DD') AS loan_date,  -- แสดงวันที่ยืมในรูปแบบ YYYY-MM-DD
-                CASE 
-                    WHEN ld.return_date IS NULL THEN 'ยังไม่คืน'  -- หากไม่มีวันที่คืนให้แสดงว่า "ยังไม่คืน"
-                    ELSE TO_CHAR(ld.return_date, 'YYYY-MM-DD')      -- แสดงวันที่คืนในรูปแบบ YYYY-MM-DD
-                END AS return_date,                      
-                CASE
-                    WHEN ld.loan_status = 'complete' THEN 'คืนแล้ว'
-                    WHEN ld.loan_status = 'deny' THEN 'ถูกปฏิเสธ'
-                    WHEN ld.loan_status = 'cancel' THEN 'ถูกยกเลิก'
-                    WHEN ld.loan_status = 'pending' THEN 'รอดำเนินการ'
-                    WHEN ld.loan_status = 'approve' THEN 'อนุมัติ'
-                    WHEN ld.loan_status = 'borrowed' THEN 'กำลังถูกยืม'
-                    WHEN ld.loan_status = 'overdue' THEN 'คืนเกินกำหนด'
-                    ELSE ld.loan_status
-                END AS transaction_status
+                ld.transaction_id,  -- ใช้ transaction_id เพื่อให้แต่ละรายการแยกกัน
+                d.device_name,
+                ROW_NUMBER() OVER (ORDER BY ld.transaction_id) AS group_index  -- ใช้ transaction_id แทน
             FROM loan_detail ld
             JOIN device_item di ON ld.item_id = di.item_id
-            JOIN device d ON di.device_id = d.device_id  
-            JOIN users u ON ld.user_id = u.user_id
-            ORDER BY transaction_id;
+            JOIN device d ON di.device_id = d.device_id
+            GROUP BY ld.transaction_id, d.device_name  -- ทำการจัดกลุ่มให้เฉพาะ transaction_id และ device_name
+        )
+        SELECT
+            gd.group_index AS index,
+            d.device_name AS device_name,
+            di.item_serial AS device_serial,
+            d.device_location AS location,
+            ld.user_id AS user_id,
+            CONCAT(u.user_firstname, ' ', u.user_lastname) AS user_name,
+            TO_CHAR(ld.loan_date, 'DD/MM/YYYY') AS loan_date,
+            CASE 
+                WHEN ld.return_date IS NULL THEN 'ยังไม่ได้คืน'
+                ELSE TO_CHAR(ld.return_date, 'DD/MM/YYYY')
+            END AS return_date,
+            CASE
+                WHEN ld.loan_status = 'complete' THEN 'คืนแล้ว'
+                WHEN ld.loan_status = 'deny' THEN 'ถูกปฏิเสธ'
+                WHEN ld.loan_status = 'cancel' THEN 'ถูกยกเลิก'
+                WHEN ld.loan_status = 'pending' THEN 'รอดำเนินการ'
+                WHEN ld.loan_status = 'approve' THEN 'อนุมัติ'
+                WHEN ld.loan_status = 'borrowed' THEN 'กำลังถูกยืม'
+                WHEN ld.loan_status = 'overdue' THEN 'คืนเกินกำหนด'
+                ELSE ld.loan_status
+            END AS สถานะรายการ
+        FROM loan_detail ld
+        JOIN device_item di ON ld.item_id = di.item_id
+        JOIN device d ON di.device_id = d.device_id  
+        JOIN users u ON ld.user_id = u.user_id
+        JOIN grouped_devices gd ON ld.transaction_id = gd.transaction_id  -- ใช้ transaction_id แทน device_name
+        ORDER BY gd.group_index, d.device_name, di.item_serial;
         `);
         if (result && result.length > 0) {
             console.log('Loan Return Query Result:', result);
@@ -2028,12 +2040,12 @@ async function generateLoanReturnReport() {
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet('รายการยืม-คืนทั้งหมด');
         worksheet.columns = [
-            { header: 'ลำดับ', key: 'index', width: 20 },
+            { header: 'รายการที่', key: 'index', width: 20 },
             { header: 'ชื่อครุภัณฑ์', key: 'device_name', width: 50 },
             { header: 'รหัสครุภัณฑ์', key: 'device_serial', width: 50 },
             { header: 'สถานที่ใช้งาน', key: 'location', width: 30 },
             { header: 'รหัสนิสิต/อาจารย์', key: 'user_id', width: 20 },
-            { header: 'ชื่อ-สกุลผู้ยืม', key: 'user_fullname', width: 25 },
+            { header: 'ชื่อ-สกุลผู้ยืม', key: 'user_name', width: 25 },
             { header: 'วันที่ยืม', key: 'loan_date', width: 20 },
             { header: 'วันที่คืน', key: 'return_date', width: 20 },
             { header: 'สถานะรายการ', key: 'transaction_status', width: 15 }
@@ -2052,53 +2064,61 @@ async function generateLoanReturnReport() {
         let notReturnedCount = 0;
         let returnedCount = 0;
 
-        // ฟังก์ชันตรวจสอบว่าเป็นวันที่ที่ถูกต้องหรือไม่
-        function isValidDate(date) {
-            return !isNaN(Date.parse(date));
-        }
-
         if (loanReturnData.length > 0) {
-            let index = 1;
-            loanReturnData.forEach(record => {
-                // ตรวจสอบว่าค่าวันที่ยืมและคืนเป็นวันที่ที่ถูกต้องหรือไม่
-                const loanDate = isValidDate(record.loan_date) ? new Date(record.loan_date).toLocaleDateString('th-TH') : 'N/A';
-                const returnDate = isValidDate(record.return_date) ? new Date(record.return_date).toLocaleDateString('th-TH') : 'ยังไม่ได้คืน';
+            let currentIndex = null;
+            let startRow = 2;
+            let endRow = 2;
 
-                // เพิ่มแถวสำหรับอุปกรณ์แต่ละตัวพร้อมข้อมูลการยืม
+            loanReturnData.forEach((record, idx) => {
                 worksheet.addRow({
-                    index: index++,
+                    index: record.index,
                     device_name: record.device_name,
                     device_serial: record.device_serial,
-                    location: record.device_location,
+                    location: record.location,
                     user_id: record.user_id,
-                    user_fullname: record.user_fullname,
-                    loan_date: loanDate,
-                    return_date: returnDate,
-                    transaction_status: record.transaction_status
+                    user_name: record.user_name,
+                    loan_date: record.loan_date,
+                    return_date: record.return_date,
+                    transaction_status: record.สถานะรายการ
                 });
 
                 totalTransactions++;
 
-                // แก้ไขการคำนวณจำนวนรายการที่ยังไม่ได้คืนและคืนแล้ว
-                if (record.transaction_status === 'กำลังถูกยืม' || returnDate === 'ยังไม่ได้คืน') {
+                // นับจำนวนรายการที่ยังไม่ได้คืน และคืนแล้ว
+                if (record.สถานะรายการ === 'กำลังถูกยืม' || record.return_date === 'ยังไม่ได้คืน') {
                     notReturnedCount++;
-                } else {
+                } else if (record.สถานะรายการ === 'คืนแล้ว' || record.สถานะรายการ === 'คืนเกินกำหนด') {
                     returnedCount++;
                 }
+
+                // ตรวจสอบว่ารายการ index เปลี่ยนหรือไม่
+                if (currentIndex !== record.index) {
+                    // Merge เซลล์ในคอลัมน์ A สำหรับกลุ่มรายการก่อนหน้านี้
+                    if (currentIndex !== null) {
+                        worksheet.mergeCells(`A${startRow}:A${endRow}`);
+                    }
+                    // ตั้งค่าเริ่มต้นสำหรับกลุ่มรายการใหม่
+                    currentIndex = record.index;
+                    startRow = idx + 2; // เริ่มต้นแถวใหม่
+                }
+                endRow = idx + 2; // ปรับค่า endRow ทุกครั้งที่วนลูป
             });
 
+            // Merge เซลล์สำหรับกลุ่มสุดท้ายหลังจากวนลูปเสร็จ
+            worksheet.mergeCells(`A${startRow}:A${endRow}`);
+
             // เว้น 1 บรรทัดแล้วเพิ่มผลรวมด้านล่าง
-            worksheet.addRow([]);
+            worksheet.addRow([]); // เว้น 1 บรรทัด
             worksheet.addRow({
-                device_name: 'จำนวนรายการยืม-คืนอุปกรณ์ทั้งหมด',
+                device_name: 'จำนวนรายการอุปกรณ์ที่ถูกยืม-คืนทั้งหมด',
                 device_serial: totalTransactions
             }).font = { bold: true };
             worksheet.addRow({
-                device_name: 'จำนวนรายการที่ยังไม่ได้คืน',
+                device_name: 'จำนวนรายการอุปกรณ์ที่ยังไม่ได้คืน',
                 device_serial: notReturnedCount
             }).font = { bold: true };
             worksheet.addRow({
-                device_name: 'จำนวนรายการที่คืนแล้ว',
+                device_name: 'จำนวนรายการอุปกรณ์ที่คืนแล้ว',
                 device_serial: returnedCount
             }).font = { bold: true };
 
@@ -2148,7 +2168,7 @@ async function generateDeviceStatusReport() {
             const worksheet = workbook.addWorksheet(`สถานะ ${statusNames[status]}`);
             worksheet.columns = [
                 { header: 'ชื่อครุภัณฑ์', key: 'device_name', width: 50 },
-                { header: 'หมายเลขครุภัณฑ์', key: 'item_serial', width: 30 },
+                { header: 'หมายเลขครุภัณฑ์', key: 'item_serial', width: 50 },
                 { header: 'ยี่ห้อ', key: 'device_brand', width: 20 },
                 { header: 'รุ่น/โมเดล', key: 'device_model', width: 20 },
                 { header: 'สถานที่ใช้งาน', key: 'device_location', width: 20 },
@@ -2156,6 +2176,11 @@ async function generateDeviceStatusReport() {
                 { header: 'สถานะ', key: 'item_availability', width: 20 }
             ];
             worksheet.getRow(1).font = { bold: true };
+            worksheet.getRow(1).fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFD3D3D3' }
+            };
 
             // ดึงข้อมูลอุปกรณ์ตามสถานะ
             try {
@@ -2217,13 +2242,18 @@ async function generateDeviceTypeReport() {
             worksheet.columns = [
                 { header: 'ลำดับที่', key: 'index', width: 10 },
                 { header: 'ชื่อครุภัณฑ์', key: 'device_name', width: 50 },
-                { header: 'หมายเลขครุภัณฑ์', key: 'item_serial', width: 30 },
+                { header: 'หมายเลขครุภัณฑ์', key: 'item_serial', width: 50 },
                 { header: 'ยี่ห้อ', key: 'device_brand', width: 20 },
                 { header: 'รุ่น/โมเดล', key: 'device_model', width: 20 },
                 { header: 'สถานที่ใช้งาน', key: 'device_location', width: 20 },
                 { header: 'ชื่อผู้รับผิดชอบ', key: 'device_responsible', width: 20 }
             ];
             worksheet.getRow(1).font = { bold: true };
+            worksheet.getRow(1).fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFD3D3D3' }
+            };
         }
 
         // ประเภทอุปกรณ์ที่ต้องการรายงาน

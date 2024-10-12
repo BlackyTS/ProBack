@@ -2603,6 +2603,7 @@ app.post('/fetch-report', async (req, res) => {
             rd.return_date AT TIME ZONE 'Asia/Bangkok' AS return_date,
             rd.return_status,
             CASE
+                WHEN ld.loan_status = 'pending' THEN 'pending'
                 WHEN rd.return_date IS NULL AND ld.loan_date < CURRENT_DATE THEN 'overdue'
                 WHEN rd.return_date IS NULL THEN 'borrowed'
                 ELSE 'returned'
@@ -2616,7 +2617,8 @@ app.post('/fetch-report', async (req, res) => {
         WHERE
             ld.user_id = $1
             AND di.item_type = $2
-            AND ld.loan_date AT TIME ZONE 'Asia/Bangkok' BETWEEN $3::DATE AND $3::DATE + INTERVAL '1 DAY'
+            AND ld.loan_date AT TIME ZONE 'Asia/Bangkok' BETWEEN $3::DATE AND $3::DATE + INTERVAL '1 DAY';
+
         `, [user_id, device_type, loan_date]);
 
         if (data.length === 0) {

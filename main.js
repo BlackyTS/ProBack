@@ -120,7 +120,7 @@ app.post('/login', (req, res) => {
             if (match) {
                 const token = generateToken(user);
                 console.log(token)
-                res.cookie('token', token, { maxAge: 72*60*60*1000, httpOnly: true, secure: true, sameSite: 'none' });
+                //res.cookie('token', token, { maxAge: 72*60*60*1000, httpOnly: true, secure: true, sameSite: 'none' });
                 res.status(200).json({ 
                     type: "ok",
                     message: 'Logged in successfully',

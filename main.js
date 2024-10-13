@@ -59,7 +59,8 @@ const generateToken = (user) => {
 
 // ฟังก์ชัน Middleware สำหรับการตรวจสอบ JWT token
 const authenticateToken = (req, res, next) => {
-    const token = req.cookies['token'];
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // แยก Bearer ออก
     if (!token) {
         console.log('No token provided');
         return res.sendStatus(401); 
